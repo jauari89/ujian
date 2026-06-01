@@ -1,0 +1,171 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Attempt;
+use App\Models\AttemptAnswer;
+use App\Models\Course;
+use App\Models\Exam;
+use App\Models\ExamPackage;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class ExamController extends Controller
+{
+    public function active(Request $request)
+    {
+        $query = Exam::with('course:id,name,slug')
+            ->withCount('questions')
+            ->where('is_active', true)
+            ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
+            ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()));
+
+        if ($request->filled('course_id')) {
+            $query->where('course_id', $request->integer('course_id'));
+        }
+
+        if ($request->filled('course_slug')) {
+            $query->whereHas('course', fn ($course) => $course->where('slug', $request->string('course_slug')->toString()));
+        }
+
+        $exam = $query->orderByDesc('questions_count')->latest('id')->first();
+
+        if (! $exam) {
+            return response()->json(['message' => 'Belum ada ujian aktif.'], 404);
+        }
+
+        $attempt = Attempt::where('exam_id', $exam->id)
+            ->where('user_id', $request->user()->id)
+            ->first();
+
+        return response()->json([
+            'exam' => [
+                'id' => $exam->id,
+                'course' => $exam->course,
+                'title' => $exam->title,
+                'duration_minutes' => $exam->duration_minutes,
+                'opens_at' => $exam->opens_at,
+                'closes_at' => $exam->closes_at,
+                'question_count' => $exam->questions_count,
+                'package_count' => $exam->packages()->where('is_active', true)->count(),
+            ],
+            'attempt' => $attempt,
+        ]);
+    }
+
+    public function start(Request $request, Exam $exam)
+    {
+        if (! $exam->is_active) {
+            return response()->json(['message' => 'Ujian ditutup oleh admin.'], 422);
+        }
+
+        if ($exam->opens_at && now()->lessThan($exam->opens_at)) {
+            return response()->json(['message' => 'Masa ujian belum dibuka.'], 422);
+        }
+
+        if ($exam->closes_at && now()->greaterThan($exam->closes_at)) {
+            return response()->json(['message' => 'Masa ujian sudah berakhir.'], 422);
+        }
+
+        $package = $this->packageForStudent($exam, $request->user()->id);
+        $questions = $package
+            ? $package->questions()->get(['questions.id'])
+            : $exam->questions()->orderBy('id')->get(['id']);
+
+        if ($questions->isEmpty()) {
+            return response()->json(['message' => 'Soal belum diimport.'], 422);
+        }
+
+        $existing = Attempt::where('exam_id', $exam->id)
+            ->where('user_id', $request->user()->id)
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'message' => 'Attempt sudah pernah dibuat untuk ujian ini.',
+                'attempt' => $existing,
+            ], 409);
+        }
+
+        $attempt = DB::transaction(function () use ($request, $exam, $package, $questions) {
+            $startedAt = now();
+            $shufflePattern = $this->shufflePatternForStudent($exam->id, $request->user()->id);
+            $orderedQuestions = $this->deterministicShuffle($questions->pluck('id')->all(), $exam->id, $request->user()->id, $package?->id, $shufflePattern);
+
+            $attempt = Attempt::create([
+                'exam_id' => $exam->id,
+                'exam_package_id' => $package?->id,
+                'shuffle_pattern' => $shufflePattern,
+                'user_id' => $request->user()->id,
+                'started_at' => $startedAt,
+                'ends_at' => $startedAt->copy()->addMinutes($exam->duration_minutes),
+                'status' => 'in_progress',
+                'score' => 0,
+                'total_questions' => $questions->count(),
+            ]);
+
+            AttemptAnswer::insert(collect($orderedQuestions)->values()->map(fn ($questionId, $index) => [
+                'attempt_id' => $attempt->id,
+                'question_id' => $questionId,
+                'display_order' => $index + 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ])->all());
+
+            return $attempt;
+        });
+
+        return response()->json(['attempt' => $attempt], 201);
+    }
+
+    public function courses()
+    {
+        return response()->json([
+            'courses' => Course::withCount(['exams' => fn ($query) => $query
+                ->where('is_active', true)
+                ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
+                ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()))])
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(),
+        ]);
+    }
+
+    private function packageForStudent(Exam $exam, int $userId): ?ExamPackage
+    {
+        $packages = $exam->packages()
+            ->where('is_active', true)
+            ->withCount('questions')
+            ->get()
+            ->filter(fn (ExamPackage $package) => $package->questions_count > 0)
+            ->values();
+
+        if ($packages->isEmpty()) {
+            return null;
+        }
+
+        return $packages[($userId - 1) % $packages->count()];
+    }
+
+    private function shufflePatternForStudent(int $examId, int $userId): int
+    {
+        return (abs(crc32("exam:{$examId}:user:{$userId}")) % 10) + 1;
+    }
+
+    /**
+     * Deterministic per-attempt shuffle: same student keeps the same order after refresh,
+     * different students can receive different package/order patterns.
+     */
+    private function deterministicShuffle(array $questionIds, int $examId, int $userId, ?int $packageId, int $pattern): array
+    {
+        usort($questionIds, function (int $left, int $right) use ($examId, $userId, $packageId, $pattern) {
+            $leftHash = crc32("{$examId}:{$packageId}:{$userId}:{$pattern}:{$left}");
+            $rightHash = crc32("{$examId}:{$packageId}:{$userId}:{$pattern}:{$right}");
+
+            return $leftHash <=> $rightHash;
+        });
+
+        return $questionIds;
+    }
+}
