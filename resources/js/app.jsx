@@ -77,6 +77,7 @@ function App() {
                     <Route path="/attempt/:id" element={<Private user={user}><AttemptPage /></Private>} />
                     <Route path="/result/:id" element={<Private user={user}><ResultPage /></Private>} />
                     <Route path="/admin/master" element={<Private user={user} role="admin"><AdminMaster /></Private>} />
+                    <Route path="/admin/students" element={<Private user={user} role="admin"><AdminStudents /></Private>} />
                     <Route path="/admin/report" element={<Private user={user} role="admin"><AdminReport /></Private>} />
                     <Route path="/admin/import" element={<Private user={user} role="admin"><AdminImport /></Private>} />
                     <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin/import' : '/courses') : '/login'} />} />
@@ -117,6 +118,7 @@ function AdminNav() {
     const items = [
         { to: '/admin/import', label: 'Console', icon: LayoutDashboard },
         { to: '/admin/master', label: 'Master Data', icon: Database },
+        { to: '/admin/students', label: 'Mahasiswa', icon: Users },
         { to: '/admin/report', label: 'Report', icon: BarChart3 },
     ];
 
@@ -133,6 +135,212 @@ function AdminNav() {
                 );
             })}
         </nav>
+    );
+}
+
+function AdminStudents() {
+    const emptyForm = { nrp: '', name: '', email: '', class_name: '', password: '' };
+    const [students, setStudents] = useState([]);
+    const [classes, setClasses] = useState([]);
+    const [loaded, setLoaded] = useState(false);
+    const [message, setMessage] = useState('');
+    const [error, setError] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [filter, setFilter] = useState('');
+    const [classFilter, setClassFilter] = useState('');
+    const [editingId, setEditingId] = useState(null);
+    const [form, setForm] = useState(emptyForm);
+
+    const loadStudents = () => {
+        setError('');
+        return api.get('/api/admin/students')
+            .then((data) => {
+                setStudents(data.students || []);
+                setClasses(data.classes || []);
+                setLoaded(true);
+            })
+            .catch((err) => setError(err.message));
+    };
+
+    useEffect(() => {
+        loadStudents();
+    }, []);
+
+    const startEdit = (student) => {
+        setEditingId(student.id);
+        setForm({
+            nrp: student.nrp || '',
+            name: student.name || '',
+            email: student.email || '',
+            class_name: student.class_name || '',
+            password: '',
+        });
+        setMessage('');
+        setError('');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const cancelEdit = () => {
+        setEditingId(null);
+        setForm(emptyForm);
+    };
+
+    const submitForm = async (event) => {
+        event.preventDefault();
+        setBusy(true);
+        setMessage('');
+        setError('');
+        try {
+            const payload = {
+                nrp: form.nrp.trim(),
+                name: form.name.trim(),
+                email: form.email.trim() || null,
+                class_name: form.class_name.trim() || null,
+            };
+            if (form.password.trim()) payload.password = form.password.trim();
+
+            if (editingId) {
+                await api.post(`/api/admin/students/${editingId}`, payload);
+                setMessage('Mahasiswa berhasil diperbarui.');
+            } else {
+                await api.post('/api/admin/students', payload);
+                setMessage('Mahasiswa berhasil ditambahkan.');
+            }
+            cancelEdit();
+            await loadStudents();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const deleteStudent = async (student) => {
+        if (!confirm(`Hapus mahasiswa ${student.name} (${student.nrp})? Tindakan ini tidak bisa dibatalkan.`)) return;
+        setMessage('');
+        setError('');
+        try {
+            await api.delete(`/api/admin/students/${student.id}`);
+            if (editingId === student.id) cancelEdit();
+            setMessage('Mahasiswa berhasil dihapus.');
+            await loadStudents();
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const filtered = useMemo(() => {
+        const keyword = filter.trim().toLowerCase();
+        return students.filter((student) => {
+            if (classFilter && (student.class_name || '') !== classFilter) return false;
+            if (!keyword) return true;
+            return [student.name, student.nrp, student.email, student.class_name]
+                .some((value) => String(value || '').toLowerCase().includes(keyword));
+        });
+    }, [students, filter, classFilter]);
+
+    return (
+        <div className="admin-students">
+            <section className="admin-titlebar">
+                <div>
+                    <h1>Kelola Mahasiswa</h1>
+                    <p className="muted">Tambah, ubah, dan hapus akun mahasiswa. Password default = NRP.</p>
+                </div>
+            </section>
+
+            {message && <div className="alert">{message}</div>}
+            {error && <div className="alert error">{error}</div>}
+
+            <div className="master-grid">
+                <section className="panel master-create">
+                    <div className="compact-head">
+                        <h2>{editingId ? 'Edit Mahasiswa' : 'Tambah Mahasiswa'}</h2>
+                        <span>{editingId ? 'Edit' : 'Baru'}</span>
+                    </div>
+                    <form onSubmit={submitForm}>
+                        <div className="field">
+                            <label>NRP</label>
+                            <input value={form.nrp} onChange={(event) => setForm({ ...form, nrp: event.target.value })} placeholder="5123500001" maxLength={10} required />
+                        </div>
+                        <div className="field">
+                            <label>Nama</label>
+                            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Nama lengkap" required />
+                        </div>
+                        <div className="field">
+                            <label>Kelas</label>
+                            <input list="admin-class-options" value={form.class_name} onChange={(event) => setForm({ ...form, class_name: event.target.value })} placeholder="Contoh: 3 MMB A" />
+                            <datalist id="admin-class-options">
+                                {classes.map((name) => <option key={name} value={name} />)}
+                            </datalist>
+                        </div>
+                        <div className="field">
+                            <label>Email <span className="muted">(opsional)</span></label>
+                            <input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="opsional" />
+                        </div>
+                        <div className="field">
+                            <label>Password <span className="muted">{editingId ? '(kosongkan = tidak diubah)' : '(kosongkan = sama dengan NRP)'}</span></label>
+                            <input value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder={editingId ? 'Reset password (opsional)' : 'Default: NRP'} />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <button className="btn primary" disabled={busy}>
+                                {editingId ? <><Check size={17} /> Simpan Perubahan</> : <><Plus size={17} /> Tambah Mahasiswa</>}
+                            </button>
+                            {editingId && <button type="button" className="btn secondary" onClick={cancelEdit}><X size={17} /> Batal</button>}
+                        </div>
+                    </form>
+                </section>
+
+                <section className="panel">
+                    <div className="section-head">
+                        <div>
+                            <h2>Daftar Mahasiswa</h2>
+                            <p className="muted">{filtered.length} dari {students.length} mahasiswa tampil.</p>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <select value={classFilter} onChange={(event) => setClassFilter(event.target.value)}>
+                                <option value="">Semua kelas</option>
+                                {classes.map((name) => <option key={name} value={name}>{name}</option>)}
+                            </select>
+                            <input className="search-input" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Cari nama, NRP, kelas..." />
+                        </div>
+                    </div>
+                    <div className="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>NRP</th>
+                                    <th>Nama</th>
+                                    <th>Kelas</th>
+                                    <th>Email</th>
+                                    <th>Status</th>
+                                    <th>Ujian</th>
+                                    <th>Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map((student) => (
+                                    <tr key={student.id} className={editingId === student.id ? 'active' : ''}>
+                                        <td>{student.nrp || '-'}</td>
+                                        <td>{student.name}</td>
+                                        <td>{student.class_name || '-'}</td>
+                                        <td>{student.email || '-'}</td>
+                                        <td><span className={`status-pill mini ${student.has_logged_in ? 'open' : 'closed'}`}>{student.has_logged_in ? 'Sudah login' : 'Belum'}</span></td>
+                                        <td>{student.attempts_count}</td>
+                                        <td>
+                                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                                <button className="btn secondary mini" onClick={() => startEdit(student)}><Pencil size={15} /> Edit</button>
+                                                <button className="btn danger mini" onClick={() => deleteStudent(student)}><Trash2 size={15} /> Hapus</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {loaded && filtered.length === 0 && <tr><td colSpan="7">Mahasiswa tidak ditemukan.</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </div>
     );
 }
 

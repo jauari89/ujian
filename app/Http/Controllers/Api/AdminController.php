@@ -322,6 +322,122 @@ class AdminController extends Controller
         ]);
     }
 
+    public function students()
+    {
+        $students = User::where('role', 'student')
+            ->withCount('attempts')
+            ->orderByRaw('class_name is null')
+            ->orderBy('class_name')
+            ->orderBy('nrp')
+            ->get(['id', 'nrp', 'name', 'email', 'class_name', 'first_login_at', 'created_at']);
+
+        return response()->json([
+            'students' => $students->map(fn (User $student) => $this->studentPayload($student))->values(),
+            'classes' => User::where('role', 'student')
+                ->whereNotNull('class_name')
+                ->distinct()
+                ->orderBy('class_name')
+                ->pluck('class_name')
+                ->values(),
+        ]);
+    }
+
+    public function storeStudent(Request $request)
+    {
+        $data = $request->validate([
+            'nrp' => ['required', 'string', 'max:10', 'unique:users,nrp'],
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
+            'class_name' => ['nullable', 'string', 'max:100'],
+            'password' => ['nullable', 'string', 'min:6', 'max:255'],
+        ]);
+
+        // password di-cast 'hashed' di model, jadi assign nilai mentah.
+        // Default password = NRP (konvensi aplikasi).
+        $student = User::create([
+            'nrp' => $data['nrp'],
+            'name' => $data['name'],
+            'email' => $data['email'] ?? null,
+            'class_name' => $data['class_name'] ?? null,
+            'role' => 'student',
+            'password' => $data['password'] ?? $data['nrp'],
+        ]);
+
+        return response()->json([
+            'message' => 'Mahasiswa berhasil ditambahkan.',
+            'student' => $this->studentPayload($student->loadCount('attempts')),
+        ], 201);
+    }
+
+    public function updateStudent(Request $request, User $student)
+    {
+        $this->ensureStudent($student);
+
+        $data = $request->validate([
+            'nrp' => ['required', 'string', 'max:10', Rule::unique('users', 'nrp')->ignore($student->id)],
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['nullable', 'email', 'max:255', Rule::unique('users', 'email')->ignore($student->id)],
+            'class_name' => ['nullable', 'string', 'max:100'],
+            'password' => ['nullable', 'string', 'min:6', 'max:255'],
+        ]);
+
+        $student->fill([
+            'nrp' => $data['nrp'],
+            'name' => $data['name'],
+            'email' => $data['email'] ?? null,
+            'class_name' => $data['class_name'] ?? null,
+        ]);
+
+        // Password hanya diubah bila admin mengisi field-nya (kosong = tetap).
+        if (! empty($data['password'])) {
+            $student->password = $data['password'];
+        }
+
+        $student->save();
+
+        return response()->json([
+            'message' => 'Mahasiswa berhasil diperbarui.',
+            'student' => $this->studentPayload($student->fresh()->loadCount('attempts')),
+        ]);
+    }
+
+    public function destroyStudent(User $student)
+    {
+        $this->ensureStudent($student);
+
+        if ($student->attempts()->exists()) {
+            return response()->json([
+                'message' => 'Mahasiswa sudah memiliki attempt ujian. Reset/hapus attempt-nya dahulu sebelum menghapus akun ini.',
+            ], 422);
+        }
+
+        $student->delete();
+
+        return response()->json(['message' => 'Mahasiswa berhasil dihapus.']);
+    }
+
+    private function ensureStudent(User $student): void
+    {
+        if ($student->role !== 'student') {
+            throw ValidationException::withMessages([
+                'student' => 'Akun ini bukan mahasiswa sehingga tidak bisa dikelola di sini.',
+            ]);
+        }
+    }
+
+    private function studentPayload(User $student): array
+    {
+        return [
+            'id' => $student->id,
+            'nrp' => $student->nrp,
+            'name' => $student->name,
+            'email' => $student->email,
+            'class_name' => $student->class_name,
+            'attempts_count' => $student->attempts_count ?? $student->attempts()->count(),
+            'has_logged_in' => $student->first_login_at !== null,
+        ];
+    }
+
     public function storeCourse(Request $request)
     {
         $data = $request->validate([

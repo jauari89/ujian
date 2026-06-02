@@ -23,6 +23,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware('role:admin')->group(function () {
         Route::get('/admin/master-data', [AdminController::class, 'masterData']);
+        Route::get('/admin/students', [AdminController::class, 'students']);
+        Route::post('/admin/students', [AdminController::class, 'storeStudent']);
+        Route::post('/admin/students/{student}', [AdminController::class, 'updateStudent']);
+        Route::delete('/admin/students/{student}', [AdminController::class, 'destroyStudent']);
         Route::get('/admin/courses', [AdminController::class, 'courses']);
         Route::post('/admin/courses', [AdminController::class, 'storeCourse']);
         Route::get('/admin/courses/{course}/grade-scales', [AdminController::class, 'gradeScales']);
