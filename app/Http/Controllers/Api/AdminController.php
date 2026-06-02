@@ -182,6 +182,16 @@ class AdminController extends Controller
             ? $this->questionAnalysis($reportExam, $scoredAttempts->where('exam_id', $reportExam->id)->pluck('id')->all())
             : [];
 
+        // Mahasiswa yang belum mengerjakan: tidak punya attempt sesuai filter aktif
+        // (per-ujian jika exam dipilih, per-mata-kuliah jika course dipilih, atau global).
+        $attemptedUserIds = $attempts->pluck('user_id')->unique()->all();
+        $notAttempted = User::where('role', 'student')
+            ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->where('class_name', $className))
+            ->whereNotIn('id', $attemptedUserIds)
+            ->orderBy('class_name')
+            ->orderBy('name')
+            ->get(['id', 'nrp', 'name', 'class_name', 'first_login_at']);
+
         return response()->json([
             'filters' => $filters,
             'meta' => [
@@ -234,6 +244,14 @@ class AdminController extends Controller
             ])->values(),
             'question_analysis_exam' => $reportExam?->load('course:id,name,slug'),
             'question_analysis' => $questionAnalysis,
+            'not_attempted' => $notAttempted->map(fn (User $student) => [
+                'id' => $student->id,
+                'nrp' => $student->nrp,
+                'name' => $student->name,
+                'class_name' => $student->class_name,
+                'first_login_at' => $student->first_login_at,
+                'has_logged_in' => $student->first_login_at !== null,
+            ])->values(),
         ]);
     }
 
