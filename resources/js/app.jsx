@@ -3,7 +3,7 @@ import '../css/app.css';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BarChart3, BookOpen, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 
 const api = {
     csrfReady: false,
@@ -150,6 +150,8 @@ function AdminStudents() {
     const [classFilter, setClassFilter] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [form, setForm] = useState(emptyForm);
+    const [page, setPage] = useState(1);
+    const pageSize = 20;
 
     const loadStudents = () => {
         setError('');
@@ -239,6 +241,12 @@ function AdminStudents() {
         });
     }, [students, filter, classFilter]);
 
+    useEffect(() => { setPage(1); }, [filter, classFilter]);
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const pageSafe = Math.min(page, totalPages);
+    const paged = filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize);
+
     return (
         <div className="admin-students">
             <section className="admin-titlebar">
@@ -318,7 +326,7 @@ function AdminStudents() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {filtered.map((student) => (
+                                {paged.map((student) => (
                                     <tr key={student.id} className={editingId === student.id ? 'active' : ''}>
                                         <td>{student.nrp || '-'}</td>
                                         <td>{student.name}</td>
@@ -338,6 +346,13 @@ function AdminStudents() {
                             </tbody>
                         </table>
                     </div>
+                    {totalPages > 1 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                            <button className="btn secondary mini" disabled={pageSafe <= 1} onClick={() => setPage(pageSafe - 1)}><ChevronLeft size={15} /> Sebelumnya</button>
+                            <span className="muted">Halaman {pageSafe} / {totalPages}</span>
+                            <button className="btn secondary mini" disabled={pageSafe >= totalPages} onClick={() => setPage(pageSafe + 1)}>Berikutnya <ChevronRight size={15} /></button>
+                        </div>
+                    )}
                 </section>
             </div>
         </div>
