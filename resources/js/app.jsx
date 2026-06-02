@@ -3,7 +3,7 @@ import '../css/app.css';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BarChart3, BookOpen, CalendarClock, Check, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 
 const api = {
     csrfReady: false,
@@ -759,6 +759,10 @@ function AdminReport() {
     const [filters, setFilters] = useState({ course_id: '', exam_id: '', class_name: '' });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [sort, setSort] = useState({ key: null, dir: 'asc' });
+    const [qSort, setQSort] = useState({ key: null, dir: 'asc' });
+    const [nSort, setNSort] = useState({ key: null, dir: 'asc' });
+    const [tab, setTab] = useState('results');
 
     useEffect(() => {
         const params = new URLSearchParams();
@@ -787,7 +791,99 @@ function AdminReport() {
     const classes = report?.meta?.classes || [];
     const summary = report?.summary || {};
     const studentResults = report?.student_results || [];
+    const notAttempted = report?.not_attempted || [];
     const questionAnalysis = report?.question_analysis || [];
+
+    const studentColumns = [
+        { key: 'name', label: 'Nama', type: 'text', value: (a) => a.student?.name },
+        { key: 'nrp', label: 'NRP', type: 'text', value: (a) => a.student?.nrp },
+        { key: 'class_name', label: 'Kelas', type: 'text', value: (a) => a.student?.class_name },
+        { key: 'course', label: 'Mata Kuliah', type: 'text', value: (a) => a.course },
+        { key: 'exam', label: 'Ujian', type: 'text', value: (a) => a.exam },
+        { key: 'package', label: 'Paket', type: 'text', value: (a) => a.package },
+        { key: 'shuffle_pattern', label: 'Pola', type: 'number', value: (a) => a.shuffle_pattern },
+        { key: 'status', label: 'Status', type: 'text', value: (a) => a.status },
+        { key: 'score', label: 'Skor', type: 'number', value: (a) => a.score },
+        { key: 'percentage', label: 'Nilai', type: 'number', value: (a) => a.percentage },
+        { key: 'letter_grade', label: 'Grade', type: 'text', value: (a) => a.letter_grade },
+    ];
+
+    const toggleSort = (key) => {
+        setSort((current) => (
+            current.key === key
+                ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+                : { key, dir: 'asc' }
+        ));
+    };
+
+    const sortRows = (rows, columns, state) => {
+        if (!state.key) return rows;
+        const column = columns.find((col) => col.key === state.key);
+        if (!column) return rows;
+        const factor = state.dir === 'asc' ? 1 : -1;
+        return [...rows].sort((a, b) => {
+            const av = column.value(a);
+            const bv = column.value(b);
+            const aEmpty = av === null || av === undefined || av === '';
+            const bEmpty = bv === null || bv === undefined || bv === '';
+            if (aEmpty && bEmpty) return 0;
+            if (aEmpty) return 1;
+            if (bEmpty) return -1;
+            if (column.type === 'number') return (Number(av) - Number(bv)) * factor;
+            return String(av).localeCompare(String(bv), 'id-ID', { numeric: true, sensitivity: 'base' }) * factor;
+        });
+    };
+
+    const sortedStudentResults = useMemo(
+        () => sortRows(studentResults, studentColumns, sort),
+        [studentResults, sort.key, sort.dir]
+    );
+
+    const questionColumns = [
+        { key: 'number', label: 'No', type: 'number', value: (q) => q.number },
+        { key: 'week', label: 'Minggu', type: 'number', value: (q) => q.week },
+        { key: 'question_type', label: 'Jenis', type: 'text', value: (q) => questionTypeLabel(q.question_type) },
+        { key: 'question_text', label: 'Soal', type: 'text', value: (q) => q.question_text },
+        { key: 'answered_total', label: 'Dijawab', type: 'number', value: (q) => q.answered_total },
+        { key: 'correct_total', label: 'Benar', type: 'number', value: (q) => q.correct_total },
+        { key: 'wrong_total', label: 'Salah', type: 'number', value: (q) => q.wrong_total },
+        { key: 'unanswered_total', label: 'Kosong', type: 'number', value: (q) => q.unanswered_total },
+        { key: 'correct_rate', label: 'Akurasi', type: 'number', value: (q) => q.correct_rate },
+    ];
+
+    const toggleQSort = (key) => {
+        setQSort((current) => (
+            current.key === key
+                ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+                : { key, dir: 'asc' }
+        ));
+    };
+
+    const sortedQuestionAnalysis = useMemo(
+        () => sortRows(questionAnalysis, questionColumns, qSort),
+        [questionAnalysis, qSort.key, qSort.dir]
+    );
+
+    const notAttemptedColumns = [
+        { key: 'name', label: 'Nama', type: 'text', value: (s) => s.name },
+        { key: 'nrp', label: 'NRP', type: 'text', value: (s) => s.nrp },
+        { key: 'class_name', label: 'Kelas', type: 'text', value: (s) => s.class_name },
+        { key: 'has_logged_in', label: 'Sudah Login', type: 'number', value: (s) => (s.has_logged_in ? 1 : 0) },
+    ];
+
+    const toggleNSort = (key) => {
+        setNSort((current) => (
+            current.key === key
+                ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+                : { key, dir: 'asc' }
+        ));
+    };
+
+    const sortedNotAttempted = useMemo(
+        () => sortRows(notAttempted, notAttemptedColumns, nSort),
+        [notAttempted, nSort.key, nSort.dir]
+    );
+
     const analysisExam = report?.question_analysis_exam;
     const fmt = (value) => Number(value || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
     const pct = (value) => `${fmt(value)}%`;
@@ -868,28 +964,51 @@ function AdminReport() {
                         </section>
                     </div>
 
+                    <div className="report-tabs">
+                        <button
+                            className={`report-tab${tab === 'results' ? ' active' : ''}`}
+                            onClick={() => setTab('results')}
+                        >Hasil Mahasiswa</button>
+                        <button
+                            className={`report-tab${tab === 'analysis' ? ' active' : ''}`}
+                            onClick={() => setTab('analysis')}
+                        >Analisa Butir Soal</button>
+                        <button
+                            className={`report-tab${tab === 'not_attempted' ? ' active' : ''}`}
+                            onClick={() => setTab('not_attempted')}
+                        >Belum Mengerjakan <span className="tab-badge">{notAttempted.length}</span></button>
+                    </div>
+
+                    {tab === 'results' && (
                     <section className="panel">
                         <h2>Hasil Mahasiswa</h2>
                         <div className="table-wrap">
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>Nama</th>
-                                        <th>NRP</th>
-                                        <th>Kelas</th>
-                                        <th>Mata Kuliah</th>
-                                        <th>Ujian</th>
-                                        <th>Paket</th>
-                                        <th>Pola</th>
-                                        <th>Status</th>
-                                        <th>Skor</th>
-                                        <th>Nilai</th>
-                                        <th>Grade</th>
+                                        <th>No</th>
+                                        {studentColumns.map((column) => (
+                                            <th
+                                                key={column.key}
+                                                className="sortable"
+                                                onClick={() => toggleSort(column.key)}
+                                                role="button"
+                                                title="Klik untuk urutkan"
+                                            >
+                                                <span className="th-sort">
+                                                    {column.label}
+                                                    {sort.key === column.key
+                                                        ? (sort.dir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)
+                                                        : <ChevronsUpDown size={14} className="th-sort-idle" />}
+                                                </span>
+                                            </th>
+                                        ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {studentResults.map((attempt) => (
+                                    {sortedStudentResults.map((attempt, index) => (
                                         <tr key={attempt.id}>
+                                            <td>{index + 1}</td>
                                             <td>{attempt.student?.name || '-'}</td>
                                             <td>{attempt.student?.nrp || '-'}</td>
                                             <td>{attempt.student?.class_name || '-'}</td>
@@ -903,12 +1022,14 @@ function AdminReport() {
                                             <td><span className="badge">{attempt.letter_grade || '-'}</span></td>
                                         </tr>
                                     ))}
-                                    {studentResults.length === 0 && <tr><td colSpan="11">Belum ada attempt sesuai filter.</td></tr>}
+                                    {sortedStudentResults.length === 0 && <tr><td colSpan="12">Belum ada attempt sesuai filter.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
                     </section>
+                    )}
 
+                    {tab === 'analysis' && (
                     <section className="panel">
                         <div className="section-head">
                             <div>
@@ -920,19 +1041,26 @@ function AdminReport() {
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>No</th>
-                                        <th>Minggu</th>
-                                        <th>Jenis</th>
-                                        <th>Soal</th>
-                                        <th>Dijawab</th>
-                                        <th>Benar</th>
-                                        <th>Salah</th>
-                                        <th>Kosong</th>
-                                        <th>Akurasi</th>
+                                        {questionColumns.map((column) => (
+                                            <th
+                                                key={column.key}
+                                                className="sortable"
+                                                onClick={() => toggleQSort(column.key)}
+                                                role="button"
+                                                title="Klik untuk urutkan"
+                                            >
+                                                <span className="th-sort">
+                                                    {column.label}
+                                                    {qSort.key === column.key
+                                                        ? (qSort.dir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)
+                                                        : <ChevronsUpDown size={14} className="th-sort-idle" />}
+                                                </span>
+                                            </th>
+                                        ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {questionAnalysis.map((question) => (
+                                    {sortedQuestionAnalysis.map((question) => (
                                         <tr key={question.question_id}>
                                             <td>{question.number}</td>
                                             <td>{question.week || '-'}</td>
@@ -945,11 +1073,64 @@ function AdminReport() {
                                             <td>{pct(question.correct_rate)}</td>
                                         </tr>
                                     ))}
-                                    {questionAnalysis.length === 0 && <tr><td colSpan="9">Belum ada analisa butir soal untuk filter ini.</td></tr>}
+                                    {sortedQuestionAnalysis.length === 0 && <tr><td colSpan="9">Belum ada analisa butir soal untuk filter ini.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
                     </section>
+                    )}
+
+                    {tab === 'not_attempted' && (
+                    <section className="panel">
+                        <div className="section-head">
+                            <div>
+                                <h2>Belum Mengerjakan</h2>
+                                <p className="muted">Mahasiswa yang belum memiliki attempt sesuai filter aktif{filters.exam_id ? ' (untuk ujian terpilih)' : filters.course_id ? ' (untuk mata kuliah terpilih)' : ''}. Total {notAttempted.length} mahasiswa.</p>
+                            </div>
+                        </div>
+                        <div className="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>No</th>
+                                        {notAttemptedColumns.map((column) => (
+                                            <th
+                                                key={column.key}
+                                                className="sortable"
+                                                onClick={() => toggleNSort(column.key)}
+                                                role="button"
+                                                title="Klik untuk urutkan"
+                                            >
+                                                <span className="th-sort">
+                                                    {column.label}
+                                                    {nSort.key === column.key
+                                                        ? (nSort.dir === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />)
+                                                        : <ChevronsUpDown size={14} className="th-sort-idle" />}
+                                                </span>
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sortedNotAttempted.map((student, index) => (
+                                        <tr key={student.id}>
+                                            <td>{index + 1}</td>
+                                            <td>{student.name || '-'}</td>
+                                            <td>{student.nrp || '-'}</td>
+                                            <td>{student.class_name || '-'}</td>
+                                            <td>
+                                                {student.has_logged_in
+                                                    ? <span className="badge">Sudah login</span>
+                                                    : <span className="badge badge-warn">Belum login</span>}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {sortedNotAttempted.length === 0 && <tr><td colSpan="5">Semua mahasiswa sudah mengerjakan sesuai filter ini.</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                    )}
                 </>
             )}
         </div>

@@ -959,6 +959,62 @@ textarea {
     font-weight: 800;
 }
 
+.badge-warn {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+.report-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.report-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    color: #475569;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.report-tab:hover {
+    border-color: #2563eb;
+    color: #2563eb;
+}
+
+.report-tab.active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+}
+
+.tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.report-tab.active .tab-badge {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
+}
+
 .table-wrap {
     overflow-x: auto;
 }
@@ -987,6 +1043,26 @@ th {
     color: #65738a;
     font-size: 13px;
     text-transform: uppercase;
+}
+
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+th.sortable:hover {
+    color: #2563eb;
+    background: #f6f9ff;
+}
+
+.th-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.th-sort-idle {
+    opacity: 0.35;
 }
 
 @media (max-width: 860px) {
