@@ -11,6 +11,7 @@ class AttemptAnswer extends Model
         'question_id',
         'display_order',
         'selected_option',
+        'selected_options',
         'is_correct',
         'answered_at',
     ];
@@ -19,6 +20,7 @@ class AttemptAnswer extends Model
     {
         return [
             'is_correct' => 'boolean',
+            'selected_options' => 'array',
             'answered_at' => 'datetime',
             'display_order' => 'integer',
         ];

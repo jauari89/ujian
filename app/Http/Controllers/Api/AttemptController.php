@@ -12,16 +12,19 @@ use Illuminate\Validation\Rule;
 
 class AttemptController extends Controller
 {
+    private const TRUE_FALSE_ATTEMPT_LIMIT = 10;
+
     public function show(Request $request, Attempt $attempt)
     {
         $this->authorizeAttempt($request, $attempt);
         $this->expireIfNeeded($attempt);
+        $this->appendMissingTrueFalseAnswers($attempt);
 
         $attempt->load([
             'exam:id,course_id,title,duration_minutes',
             'exam.course:id,name,slug',
             'package:id,name,code',
-            'answers.question:id,exam_id,week,question_text,option_a,option_b,option_c,option_d',
+            'answers.question:id,exam_id,week,question_type,question_text,option_a,option_b,option_c,option_d',
         ]);
 
         return response()->json(['attempt' => $attempt]);
@@ -34,7 +37,6 @@ class AttemptController extends Controller
 
         $data = $request->validate([
             'question_id' => ['required', 'integer', Rule::exists('questions', 'id')->where('exam_id', $attempt->exam_id)],
-            'selected_option' => ['required', Rule::in(['a', 'b', 'c', 'd'])],
         ]);
 
         if ($attempt->status !== 'in_progress' || now()->greaterThan($attempt->ends_at)) {
@@ -45,12 +47,34 @@ class AttemptController extends Controller
 
         $answer = AttemptAnswer::where('attempt_id', $attempt->id)
             ->where('question_id', $data['question_id'])
+            ->with('question')
             ->firstOrFail();
 
-        $answer->update([
-            'selected_option' => $data['selected_option'],
-            'answered_at' => now(),
-        ]);
+        if (($answer->question->question_type ?? 'multiple_choice') === 'true_false') {
+            $tfData = $request->validate([
+                'selected_options' => ['required', 'array'],
+                'selected_options.a' => ['nullable', 'boolean'],
+                'selected_options.b' => ['nullable', 'boolean'],
+                'selected_options.c' => ['nullable', 'boolean'],
+                'selected_options.d' => ['nullable', 'boolean'],
+            ]);
+
+            $answer->update([
+                'selected_option' => null,
+                'selected_options' => $this->normalizeBooleanOptions($tfData['selected_options']),
+                'answered_at' => now(),
+            ]);
+        } else {
+            $choiceData = $request->validate([
+                'selected_option' => ['required', Rule::in(['a', 'b', 'c', 'd'])],
+            ]);
+
+            $answer->update([
+                'selected_option' => $choiceData['selected_option'],
+                'selected_options' => null,
+                'answered_at' => now(),
+            ]);
+        }
 
         return response()->json(['answer' => $answer]);
     }
@@ -83,7 +107,7 @@ class AttemptController extends Controller
             'exam:id,course_id,title,duration_minutes',
             'exam.course:id,name,slug',
             'package:id,name,code',
-            'answers.question:id,exam_id,week,question_text,option_a,option_b,option_c,option_d',
+            'answers.question:id,exam_id,week,question_type,question_text,option_a,option_b,option_c,option_d',
         ]);
 
         return response()->json([
@@ -118,14 +142,53 @@ class AttemptController extends Controller
         }
     }
 
+    private function appendMissingTrueFalseAnswers(Attempt $attempt): void
+    {
+        if ($attempt->status !== 'in_progress') {
+            return;
+        }
+
+        $existingTrueFalseCount = $attempt->answers()
+            ->whereHas('question', fn ($question) => $question->where('question_type', 'true_false'))
+            ->count();
+
+        if ($existingTrueFalseCount >= self::TRUE_FALSE_ATTEMPT_LIMIT) {
+            return;
+        }
+
+        $existingQuestionIds = $attempt->answers()->pluck('question_id')->all();
+        $missingQuestions = $attempt->exam->questions()
+            ->where('question_type', 'true_false')
+            ->whereNotIn('id', $existingQuestionIds)
+            ->orderBy('week')
+            ->orderBy('id')
+            ->limit(self::TRUE_FALSE_ATTEMPT_LIMIT - $existingTrueFalseCount)
+            ->get(['id']);
+
+        if ($missingQuestions->isEmpty()) {
+            return;
+        }
+
+        $nextOrder = (int) $attempt->answers()->max('display_order');
+        AttemptAnswer::insert($missingQuestions->values()->map(fn ($question, int $index) => [
+            'attempt_id' => $attempt->id,
+            'question_id' => $question->id,
+            'display_order' => $nextOrder + $index + 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ])->all());
+
+        $attempt->update(['total_questions' => $attempt->answers()->count()]);
+        $attempt->refresh();
+    }
+
     private function scoreAttempt(Attempt $attempt): Attempt
     {
         $attempt->load('answers.question', 'exam.course');
 
         $score = 0;
         foreach ($attempt->answers as $answer) {
-            $isCorrect = $answer->selected_option !== null
-                && $answer->selected_option === $answer->question->correct_option;
+            $isCorrect = $this->answerIsCorrect($answer);
             $answer->update(['is_correct' => $isCorrect]);
             $score += $isCorrect ? 1 : 0;
         }
@@ -165,5 +228,35 @@ class AttemptController extends Controller
             ->orderBy('sort_order')
             ->get()
             ->first(fn (GradeScale $scale) => $scale->contains($percentage));
+    }
+
+    private function answerIsCorrect(AttemptAnswer $answer): bool
+    {
+        if (($answer->question->question_type ?? 'multiple_choice') === 'true_false') {
+            $selected = $this->normalizeBooleanOptions($answer->selected_options ?? []);
+            $correct = $this->normalizeBooleanOptions($answer->question->correct_options ?? []);
+
+            foreach (['a', 'b', 'c', 'd'] as $key) {
+                if ($selected[$key] === null || $selected[$key] !== $correct[$key]) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return $answer->selected_option !== null
+            && $answer->selected_option === $answer->question->correct_option;
+    }
+
+    private function normalizeBooleanOptions(array $options): array
+    {
+        return collect(['a', 'b', 'c', 'd'])
+            ->mapWithKeys(fn (string $key) => [
+                $key => array_key_exists($key, $options) && $options[$key] !== null
+                    ? filter_var($options[$key], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                    : null,
+            ])
+            ->all();
     }
 }

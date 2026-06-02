@@ -2,8 +2,8 @@ import './bootstrap';
 import '../css/app.css';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BarChart3, CalendarClock, Check, Clock, FileUp, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, X } from 'lucide-react';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { BarChart3, BookOpen, CalendarClock, Check, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 
 const api = {
     csrfReady: false,
@@ -76,9 +76,10 @@ function App() {
                     <Route path="/exam" element={<Private user={user}><ExamHome /></Private>} />
                     <Route path="/attempt/:id" element={<Private user={user}><AttemptPage /></Private>} />
                     <Route path="/result/:id" element={<Private user={user}><ResultPage /></Private>} />
+                    <Route path="/admin/master" element={<Private user={user} role="admin"><AdminMaster /></Private>} />
                     <Route path="/admin/report" element={<Private user={user} role="admin"><AdminReport /></Private>} />
                     <Route path="/admin/import" element={<Private user={user} role="admin"><AdminImport /></Private>} />
-                    <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin/report' : '/courses') : '/login'} />} />
+                    <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin/import' : '/courses') : '/login'} />} />
                 </Routes>
             </Shell>
         </BrowserRouter>
@@ -100,15 +101,38 @@ function Shell({ children, user, setUser }) {
                 {user && (
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                         <span className="muted">{user.name} ({user.role})</span>
-                        {user.role === 'admin' && <Link className="btn secondary" to="/admin/report"><BarChart3 size={17} /> Report</Link>}
-                        {user.role === 'admin' && <Link className="btn secondary" to="/admin/import">Admin</Link>}
+                        {user.role === 'admin' && <AdminNav />}
                         {user.role === 'student' && <Link className="btn secondary" to="/courses">Mata Kuliah</Link>}
                         <button className="btn secondary" onClick={logout}><LogOut size={17} /> Keluar</button>
                     </div>
                 )}
             </header>
-            <main className="container">{children}</main>
+            <main className={`container ${user?.role === 'admin' ? 'admin-container' : ''}`}>{children}</main>
         </div>
+    );
+}
+
+function AdminNav() {
+    const location = useLocation();
+    const items = [
+        { to: '/admin/import', label: 'Console', icon: LayoutDashboard },
+        { to: '/admin/master', label: 'Master Data', icon: Database },
+        { to: '/admin/report', label: 'Report', icon: BarChart3 },
+    ];
+
+    return (
+        <nav className="admin-nav" aria-label="Menu admin">
+            {items.map((item) => {
+                const Icon = item.icon;
+                const active = location.pathname === item.to;
+
+                return (
+                    <Link key={item.to} className={`admin-nav-link ${active ? 'active' : ''}`} to={item.to}>
+                        <Icon size={16} /> {item.label}
+                    </Link>
+                );
+            })}
+        </nav>
     );
 }
 
@@ -133,7 +157,7 @@ function Login({ setUser }) {
             await api.csrf();
             const data = await api.post('/api/auth/login', { nrp, password });
             setUser(data.user);
-            navigate(data.user.role === 'admin' ? '/admin/report' : '/courses');
+            navigate(data.user.role === 'admin' ? '/admin/import' : '/courses');
         } catch (err) {
             setError(err.message);
         } finally {
@@ -285,6 +309,15 @@ function AttemptPage() {
 
     const answers = attempt?.answers || [];
     const active = answers[current];
+    const multipleChoiceAnswers = answers.filter((answer) => answer.question?.question_type !== 'true_false');
+    const trueFalseAnswers = answers.filter((answer) => answer.question?.question_type === 'true_false');
+    const activePhase = active?.question?.question_type === 'true_false' ? 'true_false' : 'multiple_choice';
+    const phaseAnswers = activePhase === 'true_false' ? trueFalseAnswers : multipleChoiceAnswers;
+    const phaseTitle = activePhase === 'true_false' ? 'Tahap True/False' : 'Tahap ABCD';
+    const phaseIndex = phaseAnswers.findIndex((answer) => answer.id === active?.id);
+    const multipleChoiceComplete = multipleChoiceAnswers.every(answerIsFilled);
+    const firstTrueFalseIndex = answers.findIndex((answer) => answer.question?.question_type === 'true_false');
+    const firstMultipleChoiceIndex = answers.findIndex((answer) => answer.question?.question_type !== 'true_false');
     const remaining = useMemo(() => attempt ? Math.max(0, new Date(attempt.ends_at).getTime() - now) : 0, [attempt, now]);
     const warning = remaining <= 5 * 60 * 1000;
 
@@ -294,13 +327,45 @@ function AttemptPage() {
         }
     }, [remaining, attempt]);
 
+    const setAnswerState = (answerId, patch) => {
+        setAttempt((currentAttempt) => ({
+            ...currentAttempt,
+            answers: currentAttempt.answers.map((item) => item.id === answerId ? { ...item, ...patch } : item),
+        }));
+    };
+
+    const goToPhase = (phase) => {
+        if (phase === 'true_false' && firstTrueFalseIndex < 0) return;
+        if (phase === 'multiple_choice' && firstMultipleChoiceIndex >= 0) setCurrent(firstMultipleChoiceIndex);
+        if (phase === 'true_false') setCurrent(firstTrueFalseIndex);
+    };
+
     const choose = async (option) => {
         if (!active || attempt.status !== 'in_progress') return;
-        const optimistic = { ...attempt, answers: answers.map((item, index) => index === current ? { ...item, selected_option: option } : item) };
-        setAttempt(optimistic);
+        setAnswerState(active.id, { selected_option: option, selected_options: null });
         setSaving('Menyimpan...');
         try {
             await api.post(`/api/attempts/${id}/answer`, { question_id: active.question_id, selected_option: option });
+            setSaving('Saved');
+            const nextAnswers = answers.map((item) => item.id === active.id ? { ...item, selected_option: option, selected_options: null } : item);
+            const nextMultipleChoiceComplete = nextAnswers
+                .filter((answer) => answer.question?.question_type !== 'true_false')
+                .every(answerIsFilled);
+            if (nextMultipleChoiceComplete && activePhase === 'multiple_choice' && phaseIndex === multipleChoiceAnswers.length - 1 && firstTrueFalseIndex >= 0) {
+                setCurrent(firstTrueFalseIndex);
+            }
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const chooseTrueFalse = async (key, value) => {
+        if (!active || attempt.status !== 'in_progress') return;
+        const selectedOptions = { ...(active.selected_options || {}), [key]: value };
+        setAnswerState(active.id, { selected_option: null, selected_options: selectedOptions });
+        setSaving('Menyimpan...');
+        try {
+            await api.post(`/api/attempts/${id}/answer`, { question_id: active.question_id, selected_options: selectedOptions });
             setSaving('Saved');
         } catch (err) {
             setError(err.message);
@@ -308,7 +373,11 @@ function AttemptPage() {
     };
 
     const submit = async (auto = false) => {
-        if (!auto && !confirm('Submit ujian sekarang?')) return;
+        const unanswered = answers.filter((answer) => !answerIsFilled(answer)).length;
+        const message = unanswered > 0
+            ? `Masih ada ${unanswered} soal belum lengkap. Submit ujian sekarang?`
+            : 'Submit ujian sekarang?';
+        if (!auto && !confirm(message)) return;
         setSubmitting(true);
         try {
             await api.post(`/api/attempts/${id}/submit`);
@@ -325,44 +394,85 @@ function AttemptPage() {
 
     const mm = String(Math.floor(remaining / 60000)).padStart(2, '0');
     const ss = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
+    const currentNumber = phaseIndex >= 0 ? phaseIndex + 1 : current + 1;
+    const nextInPhase = () => {
+        if (phaseIndex < phaseAnswers.length - 1) {
+            setCurrent(answers.findIndex((answer) => answer.id === phaseAnswers[phaseIndex + 1].id));
+            return;
+        }
+
+        if (activePhase === 'multiple_choice' && firstTrueFalseIndex >= 0) {
+            setCurrent(firstTrueFalseIndex);
+        }
+    };
 
     return (
         <div className="exam-layout">
             <section className="panel">
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', marginBottom: 18 }}>
-                    <h2 style={{ margin: 0 }}>Soal {current + 1}</h2>
+                    <div>
+                        <h2 style={{ margin: 0 }}>{phaseTitle} {currentNumber}</h2>
+                        <p className="muted" style={{ margin: '6px 0 0' }}>{questionTypeLabel(active.question?.question_type)} | Minggu {active.question?.week || '-'}</p>
+                    </div>
                     <span className={`timer ${warning ? 'warn' : ''}`}><Clock size={17} /> {mm}:{ss}</span>
+                </div>
+                <div className="exam-tabs">
+                    <button className={`exam-tab ${activePhase === 'multiple_choice' ? 'active' : ''}`} onClick={() => goToPhase('multiple_choice')}>
+                        ABCD <span>{multipleChoiceAnswers.filter(answerIsFilled).length}/{multipleChoiceAnswers.length}</span>
+                    </button>
+                    <button className={`exam-tab ${activePhase === 'true_false' ? 'active' : ''}`} disabled={trueFalseAnswers.length === 0} onClick={() => goToPhase('true_false')}>
+                        True/False <span>{trueFalseAnswers.filter(answerIsFilled).length}/{trueFalseAnswers.length}</span>
+                    </button>
                 </div>
                 {warning && <div className="alert">Waktu kurang dari 5 menit.</div>}
                 {error && <div className="alert error">{error}</div>}
                 <p className="question-text">{active.question.question_text}</p>
-                {['a', 'b', 'c', 'd'].map((key) => (
-                    <button key={key} className={`option ${active.selected_option === key ? 'selected' : ''}`} onClick={() => choose(key)}>
-                        <span className="option-key">{key}</span>
-                        <span>{active.question[`option_${key}`]}</span>
-                    </button>
-                ))}
+                {active.question?.question_type === 'true_false' ? (
+                    <div className="tf-answer-list">
+                        {questionKeys.map((key) => (
+                            <div className="tf-answer-row" key={key}>
+                                <span className="option-key">{key}</span>
+                                <span>{active.question[`option_${key}`]}</span>
+                                <div className="tf-toggle">
+                                    <button className={active.selected_options?.[key] === true ? 'selected' : ''} onClick={() => chooseTrueFalse(key, true)}>Benar</button>
+                                    <button className={active.selected_options?.[key] === false ? 'selected' : ''} onClick={() => chooseTrueFalse(key, false)}>Salah</button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    questionKeys.map((key) => (
+                        <button key={key} className={`option ${active.selected_option === key ? 'selected' : ''}`} onClick={() => choose(key)}>
+                            <span className="option-key">{key}</span>
+                            <span>{active.question[`option_${key}`]}</span>
+                        </button>
+                    ))
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 18 }}>
-                    <button className="btn secondary" onClick={() => setCurrent(Math.max(0, current - 1))}>Sebelumnya</button>
+                    <button className="btn secondary" onClick={() => {
+                        if (phaseIndex > 0) setCurrent(answers.findIndex((answer) => answer.id === phaseAnswers[phaseIndex - 1].id));
+                    }}>Sebelumnya</button>
                     <span className="muted">{saving === 'Saved' ? <><Check size={14} /> Saved</> : saving}</span>
-                    <button className="btn secondary" onClick={() => setCurrent(Math.min(answers.length - 1, current + 1))}>Berikutnya</button>
+                    <button className="btn secondary" onClick={nextInPhase}>Berikutnya</button>
                 </div>
             </section>
             <aside className="panel">
                 <div className="stat-row"><span>Paket</span><strong>{attempt.package?.code || '-'}</strong></div>
                 <div className="stat-row"><span>Pola acak</span><strong>{attempt.shuffle_pattern || '-'}/10</strong></div>
-                <h3>Navigasi</h3>
+                <h3>Navigasi {questionTypeLabel(active.question?.question_type)}</h3>
                 <div className="nav-grid">
-                    {answers.map((answer, index) => (
+                    {phaseAnswers.map((answer, index) => (
                         <button
                             key={answer.id}
-                            className={`nav-cell ${answer.selected_option ? 'answered' : ''} ${current === index ? 'active' : ''}`}
-                            onClick={() => setCurrent(index)}
+                            className={`nav-cell ${answerIsFilled(answer) ? 'answered' : ''} ${active?.id === answer.id ? 'active' : ''}`}
+                            onClick={() => setCurrent(answers.findIndex((item) => item.id === answer.id))}
                         >
                             {index + 1}
                         </button>
                     ))}
                 </div>
+                <div className="stat-row"><span>ABCD lengkap</span><strong>{multipleChoiceAnswers.filter(answerIsFilled).length}/{multipleChoiceAnswers.length}</strong></div>
+                <div className="stat-row"><span>T/F lengkap</span><strong>{trueFalseAnswers.filter(answerIsFilled).length}/{trueFalseAnswers.length}</strong></div>
                 <button className="btn danger" style={{ width: '100%', marginTop: 18 }} disabled={submitting} onClick={() => submit(false)}>
                     {submitting ? 'Submit...' : 'Submit'}
                 </button>
@@ -396,12 +506,249 @@ function ResultPage() {
                         {data.attempt.answers.map((answer, index) => (
                             <tr key={answer.id}>
                                 <td>{index + 1}</td>
-                                <td>{answer.selected_option || '-'}</td>
+                                <td>{answerDisplay(answer)}</td>
                                 <td>{answer.is_correct ? 'Benar' : 'Salah'}</td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
+            </div>
+        </div>
+    );
+}
+
+function AdminMaster() {
+    const [data, setData] = useState(null);
+    const [message, setMessage] = useState('');
+    const [error, setError] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [studentFilter, setStudentFilter] = useState('');
+    const [courseForm, setCourseForm] = useState({ name: '', slug: '', is_active: true });
+
+    const loadMaster = () => {
+        setError('');
+
+        return api.get('/api/admin/master-data')
+            .then(setData)
+            .catch((err) => setError(err.message));
+    };
+
+    useEffect(() => {
+        loadMaster();
+    }, []);
+
+    const createCourse = async (event) => {
+        event.preventDefault();
+        setBusy(true);
+        setMessage('');
+        setError('');
+        try {
+            await api.post('/api/admin/courses', {
+                name: courseForm.name,
+                slug: courseForm.slug || null,
+                is_active: courseForm.is_active,
+            });
+            setCourseForm({ name: '', slug: '', is_active: true });
+            setMessage('Mata kuliah berhasil ditambahkan.');
+            await loadMaster();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const summary = data?.summary || {};
+    const summaryCards = [
+        ['Mata Kuliah', summary.courses || 0, BookOpen],
+        ['Ujian', summary.exams || 0, LayoutDashboard],
+        ['Bank Soal', summary.questions || 0, Database],
+        ['Mahasiswa', summary.students || 0, Users],
+        ['Kelas', summary.classes || 0, Users],
+        ['Attempt', summary.attempts || 0, BarChart3],
+    ];
+    const filteredStudents = useMemo(() => {
+        const keyword = studentFilter.trim().toLowerCase();
+        const students = data?.students || [];
+        if (!keyword) return students;
+
+        return students.filter((student) => [
+            student.name,
+            student.nrp,
+            student.email,
+            student.class_name,
+        ].some((value) => String(value || '').toLowerCase().includes(keyword)));
+    }, [data?.students, studentFilter]);
+
+    return (
+        <div className="admin-page">
+            <section className="admin-titlebar">
+                <div>
+                    <h1>Master Data</h1>
+                    <p className="muted">Pengelolaan data dasar dari database: mata kuliah, ujian, kelas, mahasiswa, paket, dan skala nilai.</p>
+                </div>
+                <button className="btn secondary" onClick={loadMaster}><RotateCcw size={17} /> Refresh</button>
+            </section>
+
+            {message && <div className="alert">{message}</div>}
+            {error && <div className="alert error">{error}</div>}
+
+            <section className="admin-overview" aria-label="Ringkasan master data">
+                {summaryCards.map(([label, value, Icon]) => (
+                    <div className="overview-item" key={label}>
+                        <span><Icon size={15} /> {label}</span>
+                        <strong>{Number(value || 0).toLocaleString('id-ID')}</strong>
+                    </div>
+                ))}
+            </section>
+
+            <div className="master-grid">
+                <section className="panel master-create">
+                    <div className="compact-head">
+                        <h2>Tambah Mata Kuliah</h2>
+                        <span>Master</span>
+                    </div>
+                    <form onSubmit={createCourse}>
+                        <div className="field">
+                            <label>Nama Mata Kuliah</label>
+                            <input value={courseForm.name} onChange={(event) => setCourseForm({ ...courseForm, name: event.target.value })} placeholder="Contoh: Basis Data" required />
+                        </div>
+                        <div className="field">
+                            <label>Slug</label>
+                            <input value={courseForm.slug} onChange={(event) => setCourseForm({ ...courseForm, slug: event.target.value })} placeholder="basis-data" />
+                        </div>
+                        <label className="check-row">
+                            <input type="checkbox" checked={courseForm.is_active} onChange={(event) => setCourseForm({ ...courseForm, is_active: event.target.checked })} />
+                            Aktif untuk ujian
+                        </label>
+                        <button className="btn primary" disabled={busy}><Plus size={17} /> Simpan Mata Kuliah</button>
+                    </form>
+                </section>
+
+                <section className="panel">
+                    <div className="compact-head">
+                        <h2>Mata Kuliah</h2>
+                        <span>{data?.courses?.length || 0}</span>
+                    </div>
+                    <div className="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Nama</th>
+                                    <th>Slug</th>
+                                    <th>Status</th>
+                                    <th>Ujian</th>
+                                    <th>Skala Nilai</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(data?.courses || []).map((course) => (
+                                    <tr key={course.id}>
+                                        <td>{course.name}</td>
+                                        <td>{course.slug}</td>
+                                        <td><span className={`status-pill mini ${course.is_active ? 'open' : 'closed'}`}>{course.is_active ? 'Aktif' : 'Nonaktif'}</span></td>
+                                        <td>{course.exams_count}</td>
+                                        <td>{course.grade_scales_count}</td>
+                                    </tr>
+                                ))}
+                                {data && data.courses.length === 0 && <tr><td colSpan="5">Belum ada mata kuliah.</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <section className="panel">
+                <div className="compact-head">
+                    <h2>Ujian</h2>
+                    <span>{data?.exams?.length || 0}</span>
+                </div>
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Ujian</th>
+                                <th>Mata Kuliah</th>
+                                <th>Status</th>
+                                <th>Durasi</th>
+                                <th>Masa Ujian</th>
+                                <th>Soal</th>
+                                <th>Paket</th>
+                                <th>Attempt</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(data?.exams || []).map((exam) => {
+                                const status = examStatus(exam);
+
+                                return (
+                                    <tr key={exam.id}>
+                                        <td>{exam.title}</td>
+                                        <td>{exam.course?.name || '-'}</td>
+                                        <td><span className={`status-pill mini ${status.className}`}>{status.label}</span></td>
+                                        <td>{exam.duration_minutes} menit</td>
+                                        <td>{formatDateTime(exam.opens_at)} - {formatDateTime(exam.closes_at)}</td>
+                                        <td>{exam.questions_count}</td>
+                                        <td>{exam.packages_count}</td>
+                                        <td>{exam.attempts_count}</td>
+                                    </tr>
+                                );
+                            })}
+                            {data && data.exams.length === 0 && <tr><td colSpan="8">Belum ada ujian.</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <div className="master-grid">
+                <section className="panel">
+                    <div className="compact-head">
+                        <h2>Kelas</h2>
+                        <span>{data?.classes?.length || 0}</span>
+                    </div>
+                    <div className="class-list">
+                        {(data?.classes || []).map((item) => (
+                            <div className="class-item" key={item.name}>
+                                <strong>{item.name}</strong>
+                                <span>{item.student_count} mahasiswa</span>
+                            </div>
+                        ))}
+                        {data && data.classes.length === 0 && <div className="empty-state">Belum ada kelas.</div>}
+                    </div>
+                </section>
+
+                <section className="panel">
+                    <div className="section-head">
+                        <div>
+                            <h2>Mahasiswa</h2>
+                            <p className="muted">{filteredStudents.length} dari {data?.students?.length || 0} mahasiswa tampil.</p>
+                        </div>
+                        <input className="search-input" value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} placeholder="Cari nama, NRP, kelas..." />
+                    </div>
+                    <div className="table-wrap master-student-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>NRP</th>
+                                    <th>Nama</th>
+                                    <th>Kelas</th>
+                                    <th>Email</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filteredStudents.map((student) => (
+                                    <tr key={student.id}>
+                                        <td>{student.nrp || '-'}</td>
+                                        <td>{student.name}</td>
+                                        <td>{student.class_name || '-'}</td>
+                                        <td>{student.email || '-'}</td>
+                                    </tr>
+                                ))}
+                                {data && filteredStudents.length === 0 && <tr><td colSpan="4">Mahasiswa tidak ditemukan.</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
             </div>
         </div>
     );
@@ -575,6 +922,7 @@ function AdminReport() {
                                     <tr>
                                         <th>No</th>
                                         <th>Minggu</th>
+                                        <th>Jenis</th>
                                         <th>Soal</th>
                                         <th>Dijawab</th>
                                         <th>Benar</th>
@@ -588,6 +936,7 @@ function AdminReport() {
                                         <tr key={question.question_id}>
                                             <td>{question.number}</td>
                                             <td>{question.week || '-'}</td>
+                                            <td><span className="badge">{questionTypeLabel(question.question_type)}</span></td>
                                             <td className="wrap-cell">{question.question_text}</td>
                                             <td>{question.answered_total}</td>
                                             <td>{question.correct_total}</td>
@@ -596,7 +945,7 @@ function AdminReport() {
                                             <td>{pct(question.correct_rate)}</td>
                                         </tr>
                                     ))}
-                                    {questionAnalysis.length === 0 && <tr><td colSpan="8">Belum ada analisa butir soal untuk filter ini.</td></tr>}
+                                    {questionAnalysis.length === 0 && <tr><td colSpan="9">Belum ada analisa butir soal untuk filter ini.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
@@ -660,14 +1009,58 @@ function examStatus(exam) {
 
 const emptyQuestionForm = {
     week: '',
+    question_type: 'multiple_choice',
     question_text: '',
     option_a: '',
     option_b: '',
     option_c: '',
     option_d: '',
     correct_option: 'a',
+    correct_options: { a: false, b: false, c: false, d: false },
     explanation: '',
 };
+
+const questionKeys = ['a', 'b', 'c', 'd'];
+const questionTypeOptions = [
+    { type: 'multiple_choice', label: 'ABCD', title: 'Soal ABCD', helper: 'Pilihan A-D dengan satu kunci jawaban.' },
+    { type: 'true_false', label: 'T/F', title: 'Soal True/False', helper: 'Pernyataan A-D dengan kunci benar/salah.' },
+    { type: 'hots', label: 'HOTS', title: 'Soal HOTS', helper: 'Pilihan A-D untuk soal penalaran tingkat tinggi.' },
+];
+
+function normalizeQuestionType(type) {
+    return type === 'true_false' || type === 'hots' ? type : 'multiple_choice';
+}
+
+function questionTypeLabel(type) {
+    return questionTypeOptions.find((item) => item.type === normalizeQuestionType(type))?.label || 'ABCD';
+}
+
+function questionTypeMeta(type) {
+    return questionTypeOptions.find((item) => item.type === normalizeQuestionType(type)) || questionTypeOptions[0];
+}
+
+function answerIsFilled(answer) {
+    if (!answer) return false;
+    if (answer.question?.question_type === 'true_false') {
+        const selected = answer.selected_options || {};
+
+        return questionKeys.every((key) => typeof selected[key] === 'boolean');
+    }
+
+    return Boolean(answer.selected_option);
+}
+
+function answerDisplay(answer) {
+    if (answer.question?.question_type === 'true_false') {
+        const selected = answer.selected_options || {};
+
+        return questionKeys
+            .map((key) => `${key.toUpperCase()}: ${typeof selected[key] === 'boolean' ? (selected[key] ? 'Benar' : 'Salah') : '-'}`)
+            .join(', ');
+    }
+
+    return answer.selected_option || '-';
+}
 
 function AdminImport() {
     const [file, setFile] = useState(null);
@@ -681,6 +1074,7 @@ function AdminImport() {
     const [questions, setQuestions] = useState([]);
     const [questionForm, setQuestionForm] = useState(emptyQuestionForm);
     const [editingQuestionId, setEditingQuestionId] = useState(null);
+    const [activeQuestionType, setActiveQuestionType] = useState('multiple_choice');
     const [busy, setBusy] = useState('');
 
     const loadAttempts = () => api.get('/api/admin/attempts').then((data) => setAttempts(data.attempts.data));
@@ -702,6 +1096,12 @@ function AdminImport() {
     const totalAttempts = exams.reduce((total, exam) => total + Number(exam.attempts_count || 0), 0);
     const latestAttempts = attempts.slice(0, 12);
     const editingQuestion = questions.find((question) => question.id === editingQuestionId);
+    const questionCounts = questionTypeOptions.reduce((counts, item) => ({
+        ...counts,
+        [item.type]: questions.filter((question) => normalizeQuestionType(question.question_type) === item.type).length,
+    }), {});
+    const filteredQuestions = questions.filter((question) => normalizeQuestionType(question.question_type) === activeQuestionType);
+    const activeQuestionMeta = questionTypeMeta(activeQuestionType);
 
     const loadQuestions = (examId = selectedExamId) => {
         if (!examId) {
@@ -723,6 +1123,7 @@ function AdminImport() {
     }, [selectedExamId, selectedExam?.duration_minutes, selectedExam?.is_active, selectedExam?.opens_at, selectedExam?.closes_at]);
 
     useEffect(() => {
+        setActiveQuestionType('multiple_choice');
         setQuestionForm(emptyQuestionForm);
         setEditingQuestionId(null);
         loadQuestions(selectedExamId);
@@ -779,22 +1180,33 @@ function AdminImport() {
     };
 
     const editQuestion = (question) => {
+        const nextType = normalizeQuestionType(question.question_type);
+        setActiveQuestionType(nextType);
         setEditingQuestionId(question.id);
         setQuestionForm({
             week: question.week || '',
+            question_type: nextType,
             question_text: question.question_text || '',
             option_a: question.option_a || '',
             option_b: question.option_b || '',
             option_c: question.option_c || '',
             option_d: question.option_d || '',
             correct_option: question.correct_option || 'a',
+            correct_options: question.correct_options || { a: false, b: false, c: false, d: false },
             explanation: question.explanation || '',
         });
     };
 
     const clearQuestionForm = () => {
         setEditingQuestionId(null);
-        setQuestionForm(emptyQuestionForm);
+        setQuestionForm({ ...emptyQuestionForm, question_type: activeQuestionType });
+    };
+
+    const switchQuestionType = (type) => {
+        const nextType = normalizeQuestionType(type);
+        setActiveQuestionType(nextType);
+        setEditingQuestionId(null);
+        setQuestionForm({ ...emptyQuestionForm, question_type: nextType });
     };
 
     const saveQuestion = async (event) => {
@@ -807,6 +1219,8 @@ function AdminImport() {
             const payload = {
                 ...questionForm,
                 week: questionForm.week ? Number(questionForm.week) : null,
+                correct_option: questionForm.question_type === 'true_false' ? 'a' : questionForm.correct_option,
+                correct_options: questionForm.question_type === 'true_false' ? questionForm.correct_options : null,
             };
             const path = editingQuestionId
                 ? `/api/admin/exams/${selectedExam.id}/questions/${editingQuestionId}`
@@ -984,8 +1398,20 @@ function AdminImport() {
                             <h3>Bank Soal</h3>
                             <button className="btn secondary" onClick={() => loadQuestions()} disabled={!selectedExam}>Refresh</button>
                         </div>
+                        <div className="question-type-tabs" aria-label="Filter jenis soal">
+                            {questionTypeOptions.map((item) => (
+                                <button
+                                    key={item.type}
+                                    className={`question-type-tab ${activeQuestionType === item.type ? 'active' : ''}`}
+                                    onClick={() => switchQuestionType(item.type)}
+                                >
+                                    <span>{item.label}</span>
+                                    <strong>{questionCounts[item.type] || 0}</strong>
+                                </button>
+                            ))}
+                        </div>
                         <div className="question-list">
-                            {questions.map((question, index) => (
+                            {filteredQuestions.map((question, index) => (
                                 <button
                                     key={question.id}
                                     className={`question-list-item ${editingQuestionId === question.id ? 'active' : ''}`}
@@ -994,64 +1420,31 @@ function AdminImport() {
                                     <span className="question-number">{index + 1}</span>
                                     <span>
                                         <strong>{question.question_text}</strong>
-                                        <small>Minggu {question.week || '-'} | Kunci {String(question.correct_option || '-').toUpperCase()}</small>
+                                        <small>
+                                            {questionTypeLabel(question.question_type)} | Minggu {question.week || '-'} | {question.question_type === 'true_false'
+                                                ? `Benar: ${questionKeys.filter((key) => question.correct_options?.[key]).map((key) => key.toUpperCase()).join(', ') || '-'}`
+                                                : `Kunci ${String(question.correct_option || '-').toUpperCase()}`}
+                                        </small>
                                     </span>
                                 </button>
                             ))}
-                            {questions.length === 0 && <div className="empty-state">Belum ada soal pada ujian ini.</div>}
+                            {filteredQuestions.length === 0 && <div className="empty-state">Belum ada soal {activeQuestionMeta.label} pada ujian ini.</div>}
                         </div>
                     </div>
 
-                    <form className="question-editor" onSubmit={saveQuestion}>
-                        <div className="editor-head">
-                            <div>
-                                <h3>{editingQuestion ? 'Edit Soal' : 'Tambah Soal'}</h3>
-                                <p className="muted">{editingQuestion ? `ID soal ${editingQuestion.id}` : 'Soal baru akan masuk ke paket A/B/C otomatis.'}</p>
-                            </div>
-                            <button className="btn primary" disabled={!selectedExam || busy === 'question'}><Plus size={17} /> {editingQuestion ? 'Simpan' : 'Tambah'}</button>
-                        </div>
-
-                        <div className="question-form-grid">
-                            <div className="field">
-                                <label>Minggu</label>
-                                <input type="number" min="1" max="16" value={questionForm.week} onChange={(event) => setQuestionForm({ ...questionForm, week: event.target.value })} />
-                            </div>
-                            <div className="field">
-                                <label>Kunci</label>
-                                <select value={questionForm.correct_option} onChange={(event) => setQuestionForm({ ...questionForm, correct_option: event.target.value })}>
-                                    <option value="a">A</option>
-                                    <option value="b">B</option>
-                                    <option value="c">C</option>
-                                    <option value="d">D</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="field">
-                            <label>Pertanyaan</label>
-                            <textarea rows="4" value={questionForm.question_text} onChange={(event) => setQuestionForm({ ...questionForm, question_text: event.target.value })} required />
-                        </div>
-
-                        {['a', 'b', 'c', 'd'].map((option) => (
-                            <div className="field" key={option}>
-                                <label>Opsi {option.toUpperCase()}</label>
-                                <textarea rows="2" value={questionForm[`option_${option}`]} onChange={(event) => setQuestionForm({ ...questionForm, [`option_${option}`]: event.target.value })} required />
-                            </div>
-                        ))}
-
-                        <div className="field">
-                            <label>Pembahasan</label>
-                            <textarea rows="3" value={questionForm.explanation} onChange={(event) => setQuestionForm({ ...questionForm, explanation: event.target.value })} />
-                        </div>
-
-                        <div className="action-row">
-                            <button className="btn primary" disabled={!selectedExam || busy === 'question'}><Plus size={17} /> {editingQuestion ? 'Simpan Perubahan' : 'Tambah Soal'}</button>
-                            <button type="button" className="btn secondary" onClick={clearQuestionForm}><X size={17} /> Kosongkan</button>
-                            {editingQuestion && (
-                                <button type="button" className="btn danger" disabled={busy === 'question'} onClick={() => deleteQuestion(editingQuestion)}><Trash2 size={17} /> Hapus</button>
-                            )}
-                        </div>
-                    </form>
+                    <QuestionEditorCard
+                        type={activeQuestionType}
+                        title={activeQuestionMeta.title}
+                        count={questionCounts[activeQuestionType] || 0}
+                        editingQuestion={editingQuestion}
+                        selectedExam={selectedExam}
+                        questionForm={questionForm}
+                        setQuestionForm={setQuestionForm}
+                        busy={busy}
+                        saveQuestion={saveQuestion}
+                        clearQuestionForm={clearQuestionForm}
+                        deleteQuestion={deleteQuestion}
+                    />
                 </div>
             </section>
 
@@ -1084,6 +1477,102 @@ function AdminImport() {
                 </div>
             </section>
         </div>
+    );
+}
+
+function QuestionEditorCard({
+    type,
+    title,
+    count,
+    editingQuestion,
+    selectedExam,
+    questionForm,
+    setQuestionForm,
+    busy,
+    saveQuestion,
+    clearQuestionForm,
+    deleteQuestion,
+}) {
+    const isTrueFalse = type === 'true_false';
+    const meta = questionTypeMeta(type);
+    const canSubmit = selectedExam && busy !== 'question';
+    const editingThisType = editingQuestion && normalizeQuestionType(editingQuestion.question_type) === type;
+
+    return (
+        <form className="question-editor compact-editor active" onSubmit={saveQuestion}>
+            <div className="editor-head">
+                <div>
+                    <h3>{editingThisType ? `Edit ${title}` : title}</h3>
+                    <p className="muted">
+                        {editingThisType
+                            ? `ID soal ${editingQuestion.id}`
+                            : `${count} soal tersimpan. ${meta.helper}`}
+                    </p>
+                </div>
+                <span className="status-pill mini open">{meta.label}</span>
+            </div>
+
+            <div className="question-form-grid">
+                <div className="field">
+                    <label>Jenis Soal</label>
+                    <input value={meta.label} readOnly />
+                </div>
+                <div className="field">
+                    <label>Minggu</label>
+                    <input type="number" min="1" max="16" value={questionForm.week} onChange={(event) => setQuestionForm({ ...questionForm, week: event.target.value, question_type: type })} />
+                </div>
+                {!isTrueFalse && (
+                    <div className="field">
+                        <label>Kunci</label>
+                        <select value={questionForm.correct_option} onChange={(event) => setQuestionForm({ ...questionForm, correct_option: event.target.value, question_type: type })}>
+                            <option value="a">A</option>
+                            <option value="b">B</option>
+                            <option value="c">C</option>
+                            <option value="d">D</option>
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            <div className="field">
+                <label>{isTrueFalse ? 'Instruksi / Pertanyaan Utama' : 'Pertanyaan'}</label>
+                <textarea rows="4" value={questionForm.question_text} onChange={(event) => setQuestionForm({ ...questionForm, question_text: event.target.value, question_type: type })} required />
+            </div>
+
+            {questionKeys.map((option) => (
+                <div className="field" key={option}>
+                    <label>{isTrueFalse ? `Pernyataan ${option.toUpperCase()}` : `Opsi ${option.toUpperCase()}`}</label>
+                    <textarea rows="2" value={questionForm[`option_${option}`]} onChange={(event) => setQuestionForm({ ...questionForm, [`option_${option}`]: event.target.value, question_type: type })} required />
+                    {isTrueFalse && (
+                        <label className="check-row compact">
+                            <input
+                                type="checkbox"
+                                checked={Boolean(questionForm.correct_options?.[option])}
+                                onChange={(event) => setQuestionForm({
+                                    ...questionForm,
+                                    question_type: type,
+                                    correct_options: { ...questionForm.correct_options, [option]: event.target.checked },
+                                })}
+                            />
+                            Pernyataan ini benar
+                        </label>
+                    )}
+                </div>
+            ))}
+
+            <div className="field">
+                <label>Pembahasan</label>
+                <textarea rows="3" value={questionForm.explanation} onChange={(event) => setQuestionForm({ ...questionForm, explanation: event.target.value, question_type: type })} />
+            </div>
+
+            <div className="action-row">
+                <button className="btn primary" disabled={!canSubmit}><Plus size={17} /> {editingThisType ? 'Simpan Perubahan' : `Tambah ${meta.label}`}</button>
+                <button type="button" className="btn secondary" onClick={clearQuestionForm}><X size={17} /> Kosongkan</button>
+                {editingThisType && (
+                    <button type="button" className="btn danger" disabled={busy === 'question'} onClick={() => deleteQuestion(editingQuestion)}><Trash2 size={17} /> Hapus</button>
+                )}
+            </div>
+        </form>
     );
 }
 

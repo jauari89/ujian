@@ -22,6 +22,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/attempts/{attempt}/result', [AttemptController::class, 'result']);
 
     Route::middleware('role:admin')->group(function () {
+        Route::get('/admin/master-data', [AdminController::class, 'masterData']);
         Route::get('/admin/courses', [AdminController::class, 'courses']);
         Route::post('/admin/courses', [AdminController::class, 'storeCourse']);
         Route::get('/admin/courses/{course}/grade-scales', [AdminController::class, 'gradeScales']);

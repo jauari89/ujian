@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Attempt;
+use App\Models\AttemptAnswer;
 use App\Models\Course;
 use App\Models\Exam;
 use App\Models\ExamPackage;
@@ -173,6 +174,25 @@ class ExamFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('exam.questions_count', 2);
 
+        $hotsId = $this->actingAs($admin)->postJson("/api/admin/exams/{$exam->id}/questions", [
+            'week' => 5,
+            'question_type' => 'hots',
+            'question_text' => 'Pertanyaan HOTS',
+            'option_a' => 'A',
+            'option_b' => 'B',
+            'option_c' => 'C',
+            'option_d' => 'D',
+            'correct_option' => 'b',
+            'explanation' => 'Pembahasan HOTS',
+        ])->assertCreated()
+            ->assertJsonPath('question.question_type', 'hots')
+            ->assertJsonPath('question.correct_option', 'b')
+            ->json('question.id');
+
+        $this->actingAs($admin)->deleteJson("/api/admin/exams/{$exam->id}/questions/{$hotsId}")
+            ->assertOk()
+            ->assertJsonPath('exam.questions_count', 2);
+
         $attemptId = $this->actingAs($student)->postJson("/api/exams/{$exam->id}/start")
             ->assertCreated()
             ->json('attempt.id');
@@ -181,6 +201,71 @@ class ExamFlowTest extends TestCase
         $this->actingAs($admin)->deleteJson("/api/admin/exams/{$exam->id}/questions/{$usedQuestion}")
             ->assertUnprocessable()
             ->assertJsonPath('message', 'Soal sudah dipakai dalam attempt mahasiswa. Reset ujian terlebih dahulu sebelum menghapus soal ini.');
+    }
+
+    public function test_attempt_runs_multiple_choice_then_ten_true_false_questions(): void
+    {
+        [$student, $exam] = $this->seedExam();
+        foreach (range(1, 12) as $number) {
+            Question::create([
+                'exam_id' => $exam->id,
+                'week' => 3,
+                'question_type' => 'true_false',
+                'question_text' => "Tentukan benar salah {$number}",
+                'option_a' => 'Pernyataan A',
+                'option_b' => 'Pernyataan B',
+                'option_c' => 'Pernyataan C',
+                'option_d' => 'Pernyataan D',
+                'correct_option' => 'a',
+                'correct_options' => ['a' => true, 'b' => false, 'c' => true, 'd' => false],
+            ]);
+        }
+
+        $attemptId = $this->actingAs($student)->postJson("/api/exams/{$exam->id}/start")
+            ->assertCreated()
+            ->assertJsonPath('attempt.total_questions', 12)
+            ->json('attempt.id');
+
+        $attempt = Attempt::with('answers.question')->findOrFail($attemptId);
+        $this->assertSame(2, $attempt->answers->take(2)->filter(fn (AttemptAnswer $answer) => $answer->question->question_type === 'multiple_choice')->count());
+        $this->assertSame(10, $attempt->answers->filter(fn (AttemptAnswer $answer) => $answer->question->question_type === 'true_false')->count());
+
+        foreach ($attempt->answers as $answer) {
+            if ($answer->question->question_type === 'true_false') {
+                $this->actingAs($student)->postJson("/api/attempts/{$attempt->id}/answer", [
+                    'question_id' => $answer->question_id,
+                    'selected_options' => ['a' => true, 'b' => false, 'c' => true, 'd' => false],
+                ])->assertOk();
+            } else {
+                $this->actingAs($student)->postJson("/api/attempts/{$attempt->id}/answer", [
+                    'question_id' => $answer->question_id,
+                    'selected_option' => $answer->question->correct_option,
+                ])->assertOk();
+            }
+        }
+
+        $this->actingAs($student)->postJson("/api/attempts/{$attempt->id}/submit")
+            ->assertOk()
+            ->assertJsonPath('attempt.score', 12)
+            ->assertJsonPath('attempt.percentage', 100);
+
+        $admin = User::create([
+            'name' => 'Admin',
+            'email' => 'admin-tf@pens.local',
+            'password' => Hash::make('Admin123!'),
+            'role' => 'admin',
+        ]);
+
+        $report = $this->actingAs($admin)->getJson("/api/admin/reports/results?exam_id={$exam->id}")
+            ->assertOk()
+            ->assertJsonPath('student_results.0.total_questions', 12)
+            ->json();
+        $trueFalseAnalysis = collect($report['question_analysis'])
+            ->where('question_type', 'true_false')
+            ->firstWhere('answered_total', 1);
+        $this->assertNotNull($trueFalseAnalysis);
+        $this->assertSame(1, $trueFalseAnalysis['answered_total']);
+        $this->assertSame(1, $trueFalseAnalysis['correct_total']);
     }
 
     public function test_admin_can_manage_courses_and_active_exam_can_be_filtered(): void
@@ -235,6 +320,37 @@ class ExamFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('exam.title', 'UTS Desain Web')
             ->assertJsonPath('exam.course.slug', 'desain-web');
+    }
+
+    public function test_admin_can_read_master_data_summary(): void
+    {
+        [$student, $exam] = $this->seedExam();
+        $student->update(['class_name' => '2 MMB']);
+        ExamPackage::ensureDefaultPackagesForExam($exam);
+
+        $admin = User::create([
+            'name' => 'Admin',
+            'email' => 'admin@pens.local',
+            'password' => Hash::make('Admin123!'),
+            'role' => 'admin',
+        ]);
+
+        $this->actingAs($student)->postJson("/api/exams/{$exam->id}/start")
+            ->assertCreated();
+
+        $this->actingAs($admin)->getJson('/api/admin/master-data')
+            ->assertOk()
+            ->assertJsonPath('summary.courses', 1)
+            ->assertJsonPath('summary.exams', 1)
+            ->assertJsonPath('summary.questions', 2)
+            ->assertJsonPath('summary.students', 1)
+            ->assertJsonPath('summary.classes', 1)
+            ->assertJsonPath('summary.attempts', 1)
+            ->assertJsonPath('summary.packages', 3)
+            ->assertJsonPath('courses.0.name', 'K3L')
+            ->assertJsonPath('exams.0.title', 'UTS K3L')
+            ->assertJsonPath('classes.0.name', '2 MMB')
+            ->assertJsonPath('students.0.nrp', '2026000001');
     }
 
     public function test_admin_can_control_exam_window_and_reset_attempts(): void

@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 
 class ExamController extends Controller
 {
+    private const TRUE_FALSE_ATTEMPT_LIMIT = 10;
+
     public function active(Request $request)
     {
         $query = Exam::with('course:id,name,slug')
@@ -70,8 +72,8 @@ class ExamController extends Controller
 
         $package = $this->packageForStudent($exam, $request->user()->id);
         $questions = $package
-            ? $package->questions()->get(['questions.id'])
-            : $exam->questions()->orderBy('id')->get(['id']);
+            ? $package->questions()->get(['questions.id', 'questions.question_type'])
+            : $exam->questions()->orderBy('id')->get(['id', 'question_type']);
 
         if ($questions->isEmpty()) {
             return response()->json(['message' => 'Soal belum diimport.'], 422);
@@ -91,7 +93,7 @@ class ExamController extends Controller
         $attempt = DB::transaction(function () use ($request, $exam, $package, $questions) {
             $startedAt = now();
             $shufflePattern = $this->shufflePatternForStudent($exam->id, $request->user()->id);
-            $orderedQuestions = $this->deterministicShuffle($questions->pluck('id')->all(), $exam->id, $request->user()->id, $package?->id, $shufflePattern);
+            $orderedQuestions = $this->orderedQuestionIdsForAttempt($questions, $exam->id, $request->user()->id, $package?->id, $shufflePattern);
 
             $attempt = Attempt::create([
                 'exam_id' => $exam->id,
@@ -102,7 +104,7 @@ class ExamController extends Controller
                 'ends_at' => $startedAt->copy()->addMinutes($exam->duration_minutes),
                 'status' => 'in_progress',
                 'score' => 0,
-                'total_questions' => $questions->count(),
+                'total_questions' => count($orderedQuestions),
             ]);
 
             AttemptAnswer::insert(collect($orderedQuestions)->values()->map(fn ($questionId, $index) => [
@@ -167,5 +169,26 @@ class ExamController extends Controller
         });
 
         return $questionIds;
+    }
+
+    private function orderedQuestionIdsForAttempt($questions, int $examId, int $userId, ?int $packageId, int $pattern): array
+    {
+        $multipleChoiceIds = $questions
+            ->filter(fn ($question) => ($question->question_type ?? 'multiple_choice') !== 'true_false')
+            ->pluck('id')
+            ->all();
+        $trueFalseIds = $questions
+            ->filter(fn ($question) => ($question->question_type ?? 'multiple_choice') === 'true_false')
+            ->pluck('id')
+            ->all();
+
+        $orderedMultipleChoice = $this->deterministicShuffle($multipleChoiceIds, $examId, $userId, $packageId, $pattern);
+        $orderedTrueFalse = array_slice(
+            $this->deterministicShuffle($trueFalseIds, $examId, $userId, $packageId, $pattern + 10),
+            0,
+            self::TRUE_FALSE_ATTEMPT_LIMIT
+        );
+
+        return [...$orderedMultipleChoice, ...$orderedTrueFalse];
     }
 }

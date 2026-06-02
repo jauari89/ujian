@@ -54,6 +54,20 @@ Artisan::command('exam:import-json {file : Path file JSON soal} {--course= : Nam
         );
 
         foreach ($payload['questions'] as $question) {
+            $questionType = $question['question_type'] ?? 'multiple_choice';
+            $correctOptions = null;
+            $correctOption = $question['correct_option'] ?? 'a';
+
+            if ($questionType === 'true_false') {
+                $correctOptions = collect(['a', 'b', 'c', 'd'])
+                    ->mapWithKeys(fn (string $key) => [
+                        $key => array_key_exists($key, $question['correct_options'] ?? [])
+                            ? filter_var($question['correct_options'][$key], FILTER_VALIDATE_BOOLEAN)
+                            : false,
+                    ])
+                    ->all();
+            }
+
             Question::updateOrCreate(
                 [
                     'exam_id' => $exam->id,
@@ -61,11 +75,13 @@ Artisan::command('exam:import-json {file : Path file JSON soal} {--course= : Nam
                 ],
                 [
                     'week' => $question['week'] ?? null,
+                    'question_type' => in_array($questionType, ['true_false', 'hots'], true) ? $questionType : 'multiple_choice',
                     'option_a' => $question['option_a'],
                     'option_b' => $question['option_b'],
                     'option_c' => $question['option_c'],
                     'option_d' => $question['option_d'],
-                    'correct_option' => $question['correct_option'],
+                    'correct_option' => $correctOption,
+                    'correct_options' => $correctOptions,
                     'explanation' => $question['explanation'] ?? null,
                 ]
             );

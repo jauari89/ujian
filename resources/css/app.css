@@ -61,10 +61,43 @@ textarea {
     color: white;
 }
 
+.admin-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    background: #f8fbff;
+}
+
+.admin-nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border-radius: 7px;
+    color: #3c4b62;
+    font-size: 14px;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.admin-nav-link.active {
+    background: #172033;
+    color: white;
+}
+
 .container {
     width: min(1120px, calc(100% - 32px));
     margin: 0 auto;
     padding: 28px 0 48px;
+}
+
+.admin-container {
+    width: min(1360px, calc(100% - 32px));
 }
 
 .panel,
@@ -212,7 +245,7 @@ textarea {
 
 .admin-overview {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
 }
 
@@ -229,6 +262,9 @@ textarea {
 .overview-item span,
 .compact-head span,
 .exam-snapshot span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     color: #65738a;
     font-size: 12px;
     font-weight: 800;
@@ -245,6 +281,71 @@ textarea {
     grid-template-columns: 330px minmax(0, 1fr);
     gap: 18px;
     align-items: start;
+}
+
+.master-grid {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+}
+
+.master-create form {
+    display: grid;
+    gap: 2px;
+}
+
+.check-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0 0 14px;
+    color: #3c4b62;
+    font-weight: 700;
+}
+
+.check-row input {
+    width: 17px;
+    height: 17px;
+}
+
+.check-row.compact {
+    margin: 6px 0 0;
+    font-size: 13px;
+}
+
+.class-list {
+    display: grid;
+    gap: 10px;
+}
+
+.class-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    background: #f8fbff;
+}
+
+.class-item span {
+    color: #65738a;
+    font-weight: 700;
+}
+
+.search-input {
+    width: min(280px, 100%);
+    border: 1px solid #c8d2df;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: white;
+}
+
+.master-student-table {
+    max-height: 520px;
+    overflow: auto;
 }
 
 .admin-rail,
@@ -355,6 +456,45 @@ textarea {
     min-width: 0;
 }
 
+.question-type-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.question-type-tab {
+    display: grid;
+    gap: 4px;
+    min-height: 52px;
+    padding: 9px 10px;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    background: white;
+    color: #172033;
+    cursor: pointer;
+    text-align: left;
+}
+
+.question-type-tab span {
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.question-type-tab strong {
+    color: #65738a;
+    font-size: 12px;
+}
+
+.question-type-tab.active {
+    border-color: #1a73e8;
+    background: #eef5ff;
+}
+
+.question-type-tab.active strong {
+    color: #1a73e8;
+}
+
 .question-list {
     display: grid;
     gap: 8px;
@@ -420,6 +560,30 @@ textarea {
     background: #f8fbff;
 }
 
+.question-editor-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(260px, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+
+.question-editor.split-card {
+    min-height: 142px;
+    background: white;
+    cursor: pointer;
+}
+
+.question-editor.split-card.active {
+    border-color: #1a73e8;
+    background: #f8fbff;
+    box-shadow: 0 12px 28px rgba(26, 115, 232, 0.09);
+    cursor: default;
+}
+
+.question-editor.compact-editor {
+    border-color: #1a73e8;
+}
+
 .editor-head {
     display: flex;
     align-items: flex-start;
@@ -433,7 +597,7 @@ textarea {
 
 .question-form-grid {
     display: grid;
-    grid-template-columns: minmax(120px, 180px) minmax(120px, 180px);
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 14px;
 }
 
@@ -613,6 +777,90 @@ textarea {
     background: #eef5ff;
 }
 
+.exam-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 18px;
+}
+
+.exam-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 8px 12px;
+    border: 1px solid #c8d2df;
+    border-radius: 8px;
+    background: white;
+    color: #172033;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.exam-tab.active {
+    border-color: #172033;
+    background: #172033;
+    color: white;
+}
+
+.exam-tab:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.exam-tab span {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #edf1f6;
+    color: #3c4b62;
+    font-size: 12px;
+}
+
+.exam-tab.active span {
+    background: rgba(255, 255, 255, 0.18);
+    color: white;
+}
+
+.tf-answer-list {
+    display: grid;
+    gap: 10px;
+}
+
+.tf-answer-row {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 13px;
+    border: 1px solid #d2dce9;
+    border-radius: 8px;
+    background: white;
+}
+
+.tf-toggle {
+    display: inline-flex;
+    gap: 6px;
+}
+
+.tf-toggle button {
+    min-width: 74px;
+    min-height: 34px;
+    border: 1px solid #c8d2df;
+    border-radius: 8px;
+    background: #f8fbff;
+    color: #172033;
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.tf-toggle button.selected {
+    border-color: #1a73e8;
+    background: #1a73e8;
+    color: white;
+}
+
 .option-key {
     display: grid;
     place-items: center;
@@ -745,7 +993,9 @@ th {
     .grid.two,
     .exam-layout,
     .admin-main-grid,
+    .master-grid,
     .settings-grid,
+    .question-editor-grid,
     .question-workspace {
         grid-template-columns: 1fr;
     }
@@ -768,6 +1018,15 @@ th {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .admin-nav {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .admin-nav-link {
+        flex: 1 1 140px;
+    }
+
     .exam-snapshot {
         grid-template-columns: 1fr;
     }
@@ -779,6 +1038,14 @@ th {
     .reset-box {
         grid-template-columns: 1fr;
         align-items: stretch;
+    }
+
+    .tf-answer-row {
+        grid-template-columns: 34px minmax(0, 1fr);
+    }
+
+    .tf-toggle {
+        grid-column: 1 / -1;
     }
 }
 

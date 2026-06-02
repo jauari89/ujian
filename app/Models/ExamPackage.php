@@ -42,6 +42,7 @@ class ExamPackage extends Model
     public static function syncPackageWithExamBank(self $package, Exam $exam): void
     {
         $sync = $exam->questions()
+            ->orderByRaw("case when question_type = 'true_false' then 1 else 0 end")
             ->orderBy('week')
             ->orderBy('id')
             ->pluck('id')

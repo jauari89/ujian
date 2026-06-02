@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class AdminController extends Controller
 {
@@ -37,12 +38,18 @@ class AdminController extends Controller
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:300'],
             'questions' => ['required', 'array', 'min:1'],
             'questions.*.week' => ['nullable', 'integer', 'min:1', 'max:16'],
+            'questions.*.question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots'])],
             'questions.*.question_text' => ['required', 'string'],
             'questions.*.option_a' => ['required', 'string'],
             'questions.*.option_b' => ['required', 'string'],
             'questions.*.option_c' => ['required', 'string'],
             'questions.*.option_d' => ['required', 'string'],
-            'questions.*.correct_option' => ['required', Rule::in(['a', 'b', 'c', 'd'])],
+            'questions.*.correct_option' => ['nullable', Rule::in(['a', 'b', 'c', 'd'])],
+            'questions.*.correct_options' => ['nullable', 'array'],
+            'questions.*.correct_options.a' => ['nullable', 'boolean'],
+            'questions.*.correct_options.b' => ['nullable', 'boolean'],
+            'questions.*.correct_options.c' => ['nullable', 'boolean'],
+            'questions.*.correct_options.d' => ['nullable', 'boolean'],
             'questions.*.explanation' => ['nullable', 'string'],
         ])->validate();
 
@@ -65,20 +72,13 @@ class AdminController extends Controller
             );
 
             foreach ($payload['questions'] as $question) {
+                $questionData = $this->normalizedQuestionData($question);
                 Question::updateOrCreate(
                     [
                         'exam_id' => $exam->id,
                         'question_text' => $question['question_text'],
                     ],
-                    [
-                        'week' => $question['week'] ?? null,
-                        'option_a' => $question['option_a'],
-                        'option_b' => $question['option_b'],
-                        'option_c' => $question['option_c'],
-                        'option_d' => $question['option_d'],
-                        'correct_option' => $question['correct_option'],
-                        'explanation' => $question['explanation'] ?? null,
-                    ]
+                    $questionData
                 );
             }
 
@@ -247,6 +247,63 @@ class AdminController extends Controller
         ]);
     }
 
+    public function masterData()
+    {
+        $courses = Course::withCount(['exams', 'gradeScales'])
+            ->orderBy('name')
+            ->get();
+        $exams = Exam::with('course:id,name,slug')
+            ->withCount(['questions', 'attempts', 'packages'])
+            ->orderBy('title')
+            ->get();
+        $students = User::where('role', 'student')
+            ->orderByRaw('class_name is null')
+            ->orderBy('class_name')
+            ->orderBy('nrp')
+            ->get(['id', 'nrp', 'name', 'email', 'class_name', 'created_at']);
+        $classes = $students
+            ->groupBy(fn (User $student) => $student->class_name ?: 'Belum ada kelas')
+            ->map(fn ($items, $name) => [
+                'name' => $name,
+                'student_count' => $items->count(),
+            ])
+            ->sortBy('name')
+            ->values();
+
+        return response()->json([
+            'summary' => [
+                'courses' => $courses->count(),
+                'exams' => $exams->count(),
+                'questions' => Question::count(),
+                'students' => $students->count(),
+                'classes' => $classes->count(),
+                'attempts' => Attempt::count(),
+                'packages' => ExamPackage::count(),
+            ],
+            'courses' => $courses->map(fn (Course $course) => [
+                'id' => $course->id,
+                'name' => $course->name,
+                'slug' => $course->slug,
+                'is_active' => $course->is_active,
+                'exams_count' => $course->exams_count,
+                'grade_scales_count' => $course->grade_scales_count,
+            ])->values(),
+            'exams' => $exams->map(fn (Exam $exam) => [
+                ...$this->examPayload($exam),
+                'packages_count' => $exam->packages_count,
+            ])->values(),
+            'classes' => $classes,
+            'students' => $students->map(fn (User $student) => [
+                'id' => $student->id,
+                'nrp' => $student->nrp,
+                'name' => $student->name,
+                'email' => $student->email,
+                'class_name' => $student->class_name,
+                'created_at' => $student->created_at,
+            ])->values(),
+        ]);
+    }
+
     public function storeCourse(Request $request)
     {
         $data = $request->validate([
@@ -292,6 +349,7 @@ class AdminController extends Controller
         return response()->json([
             'exam' => $this->examPayload($exam->load('course:id,name,slug')->loadCount(['questions', 'attempts'])),
             'questions' => $exam->questions()
+                ->orderByRaw("case when question_type = 'true_false' then 1 else 0 end")
                 ->orderBy('week')
                 ->orderBy('id')
                 ->get()
@@ -387,16 +445,24 @@ class AdminController extends Controller
 
     private function questionData(Request $request): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'week' => ['nullable', 'integer', 'min:1', 'max:16'],
+            'question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots'])],
             'question_text' => ['required', 'string'],
             'option_a' => ['required', 'string'],
             'option_b' => ['required', 'string'],
             'option_c' => ['required', 'string'],
             'option_d' => ['required', 'string'],
-            'correct_option' => ['required', Rule::in(['a', 'b', 'c', 'd'])],
+            'correct_option' => ['nullable', Rule::in(['a', 'b', 'c', 'd'])],
+            'correct_options' => ['nullable', 'array'],
+            'correct_options.a' => ['nullable', 'boolean'],
+            'correct_options.b' => ['nullable', 'boolean'],
+            'correct_options.c' => ['nullable', 'boolean'],
+            'correct_options.d' => ['nullable', 'boolean'],
             'explanation' => ['nullable', 'string'],
         ]);
+
+        return $this->normalizedQuestionData($data);
     }
 
     private function questionPayload(Question $question): array
@@ -405,14 +471,65 @@ class AdminController extends Controller
             'id' => $question->id,
             'exam_id' => $question->exam_id,
             'week' => $question->week,
+            'question_type' => $question->question_type ?? 'multiple_choice',
             'question_text' => $question->question_text,
             'option_a' => $question->option_a,
             'option_b' => $question->option_b,
             'option_c' => $question->option_c,
             'option_d' => $question->option_d,
             'correct_option' => $question->correct_option,
+            'correct_options' => $this->normalizeBooleanOptions($question->correct_options ?? []),
             'explanation' => $question->explanation,
         ];
+    }
+
+    private function normalizedQuestionData(array $data): array
+    {
+        $type = $data['question_type'] ?? 'multiple_choice';
+        if ($type === 'true_false') {
+            return [
+                'week' => $data['week'] ?? null,
+                'question_type' => 'true_false',
+                'question_text' => $data['question_text'],
+                'option_a' => $data['option_a'],
+                'option_b' => $data['option_b'],
+                'option_c' => $data['option_c'],
+                'option_d' => $data['option_d'],
+                'correct_option' => $data['correct_option'] ?? 'a',
+                'correct_options' => $this->normalizeBooleanOptions($data['correct_options'] ?? []),
+                'explanation' => $data['explanation'] ?? null,
+            ];
+        }
+
+        if (empty($data['correct_option'])) {
+            throw ValidationException::withMessages(['correct_option' => 'Kunci ABCD wajib diisi.']);
+        }
+
+        $normalizedType = $type === 'hots' ? 'hots' : 'multiple_choice';
+
+        return [
+            'week' => $data['week'] ?? null,
+            'question_type' => $normalizedType,
+            'question_text' => $data['question_text'],
+            'option_a' => $data['option_a'],
+            'option_b' => $data['option_b'],
+            'option_c' => $data['option_c'],
+            'option_d' => $data['option_d'],
+            'correct_option' => $data['correct_option'],
+            'correct_options' => null,
+            'explanation' => $data['explanation'] ?? null,
+        ];
+    }
+
+    private function normalizeBooleanOptions(array $options): array
+    {
+        return collect(['a', 'b', 'c', 'd'])
+            ->mapWithKeys(fn (string $key) => [
+                $key => array_key_exists($key, $options) && $options[$key] !== null
+                    ? filter_var($options[$key], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                    : false,
+            ])
+            ->all();
     }
 
     private function ensureQuestionBelongsToExam(Exam $exam, Question $question): void
@@ -425,6 +542,23 @@ class AdminController extends Controller
     private function syncExamPackages(Exam $exam): void
     {
         $exam->packages()->get()->each(fn (ExamPackage $package) => ExamPackage::syncPackageWithExamBank($package, $exam));
+    }
+
+    private function answerHasResponse(AttemptAnswer $answer): bool
+    {
+        if (($answer->question?->question_type ?? 'multiple_choice') === 'true_false') {
+            $selected = $answer->selected_options ?? [];
+
+            foreach (['a', 'b', 'c', 'd'] as $key) {
+                if (! array_key_exists($key, $selected) || $selected[$key] === null) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return $answer->selected_option !== null;
     }
 
     private function examPayload(Exam $exam): array
@@ -465,13 +599,15 @@ class AdminController extends Controller
     {
         if (empty($attemptIds)) {
             return $exam->questions()
+                ->orderByRaw("case when question_type = 'true_false' then 1 else 0 end")
                 ->orderBy('week')
                 ->orderBy('id')
-                ->get(['id', 'week', 'question_text'])
+                ->get(['id', 'week', 'question_type', 'question_text'])
                 ->map(fn (Question $question, int $index) => [
                     'number' => $index + 1,
                     'question_id' => $question->id,
                     'week' => $question->week,
+                    'question_type' => $question->question_type ?? 'multiple_choice',
                     'question_text' => $question->question_text,
                     'answered_total' => 0,
                     'correct_total' => 0,
@@ -484,26 +620,29 @@ class AdminController extends Controller
 
         $answers = AttemptAnswer::whereIn('attempt_id', $attemptIds)
             ->whereIn('question_id', $exam->questions()->pluck('id'))
+            ->with('question:id,question_type')
             ->get()
             ->groupBy('question_id');
 
         $participantCount = count($attemptIds);
 
         return $exam->questions()
+            ->orderByRaw("case when question_type = 'true_false' then 1 else 0 end")
             ->orderBy('week')
             ->orderBy('id')
-            ->get(['id', 'week', 'question_text'])
+            ->get(['id', 'week', 'question_type', 'question_text'])
             ->map(function (Question $question, int $index) use ($answers, $participantCount) {
                 $items = $answers->get($question->id, collect());
-                $answered = $items->whereNotNull('selected_option')->count();
+                $answered = $items->filter(fn (AttemptAnswer $answer) => $this->answerHasResponse($answer))->count();
                 $correct = $items->where('is_correct', true)->count();
-                $wrong = $items->filter(fn (AttemptAnswer $answer) => $answer->selected_option !== null && $answer->is_correct === false)->count();
+                $wrong = $items->filter(fn (AttemptAnswer $answer) => $this->answerHasResponse($answer) && $answer->is_correct === false)->count();
                 $unanswered = max(0, $participantCount - $answered);
 
                 return [
                     'number' => $index + 1,
                     'question_id' => $question->id,
                     'week' => $question->week,
+                    'question_type' => $question->question_type ?? 'multiple_choice',
                     'question_text' => $question->question_text,
                     'answered_total' => $answered,
                     'correct_total' => $correct,
