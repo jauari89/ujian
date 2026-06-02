@@ -23,6 +23,11 @@ class ExamController extends Controller
             ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
             ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()));
 
+        $allowed = $this->allowedCourseSlugs($request->user()->class_name);
+        if ($allowed !== null) {
+            $query->whereHas('course', fn ($course) => $course->whereIn('slug', $allowed));
+        }
+
         if ($request->filled('course_id')) {
             $query->where('course_id', $request->integer('course_id'));
         }
@@ -58,6 +63,11 @@ class ExamController extends Controller
 
     public function start(Request $request, Exam $exam)
     {
+        $allowed = $this->allowedCourseSlugs($request->user()->class_name);
+        if ($allowed !== null && ! in_array($exam->loadMissing('course')->course?->slug, $allowed, true)) {
+            return response()->json(['message' => 'Ujian ini tidak tersedia untuk kelas Anda.'], 403);
+        }
+
         if (! $exam->is_active) {
             return response()->json(['message' => 'Ujian ditutup oleh admin.'], 422);
         }
@@ -121,17 +131,33 @@ class ExamController extends Controller
         return response()->json(['attempt' => $attempt], 201);
     }
 
-    public function courses()
+    public function courses(Request $request)
     {
+        $allowed = $this->allowedCourseSlugs($request->user()->class_name);
+
         return response()->json([
             'courses' => Course::withCount(['exams' => fn ($query) => $query
                 ->where('is_active', true)
                 ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
                 ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()))])
                 ->where('is_active', true)
+                ->when($allowed !== null, fn ($query) => $query->whereIn('slug', $allowed))
                 ->orderBy('name')
                 ->get(),
         ]);
+    }
+
+    /**
+     * Daftar slug course yang boleh diakses kelas ini, atau null bila tak
+     * dibatasi (kelas tidak terdaftar di config/class_courses.php).
+     */
+    private function allowedCourseSlugs(?string $className): ?array
+    {
+        if ($className === null) {
+            return null;
+        }
+
+        return config('class_courses')[$className] ?? null;
     }
 
     private function packageForStudent(Exam $exam, int $userId): ?ExamPackage
