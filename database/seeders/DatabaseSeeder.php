@@ -103,6 +103,8 @@ class DatabaseSeeder extends Seeder
         }
 
         ExamPackage::ensureDefaultPackagesForExam($exam);
+
+        $this->call(StudentSeeder::class);
     }
 
 }
