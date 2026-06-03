@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#f8fbff"/>
+  <text x="480" y="46" text-anchor="middle" font-family="Arial" font-size="28" font-weight="700" fill="#172033">Arsitektur dan Cara Kerja Web Server</text>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a73e8"/>
+    </marker>
+  </defs>
+  <g font-family="Arial" font-size="18" fill="#172033">
+    <rect x="56" y="168" width="150" height="92" rx="8" fill="#ffffff" stroke="#8fb4e8" stroke-width="3"/>
+    <text x="131" y="207" text-anchor="middle" font-weight="700">Browser</text>
+    <text x="131" y="232" text-anchor="middle" font-size="14">Client</text>
+    <rect x="278" y="168" width="150" height="92" rx="8" fill="#ffffff" stroke="#8fb4e8" stroke-width="3"/>
+    <text x="353" y="207" text-anchor="middle" font-weight="700">DNS</text>
+    <text x="353" y="232" text-anchor="middle" font-size="14">Domain ke IP</text>
+    <rect x="500" y="168" width="150" height="92" rx="8" fill="#ffffff" stroke="#7bc79a" stroke-width="3"/>
+    <text x="575" y="207" text-anchor="middle" font-weight="700">Web Server</text>
+    <text x="575" y="232" text-anchor="middle" font-size="14">Nginx/Apache</text>
+    <rect x="722" y="168" width="150" height="92" rx="8" fill="#ffffff" stroke="#7bc79a" stroke-width="3"/>
+    <text x="797" y="207" text-anchor="middle" font-weight="700">Aplikasi</text>
+    <text x="797" y="232" text-anchor="middle" font-size="14">Backend</text>
+    <rect x="611" y="348" width="150" height="92" rx="8" fill="#ffffff" stroke="#f0c36a" stroke-width="3"/>
+    <text x="686" y="388" text-anchor="middle" font-weight="700">Database</text>
+    <text x="686" y="413" text-anchor="middle" font-size="14">Data dinamis</text>
+  </g>
+  <g stroke="#1a73e8" stroke-width="4" fill="none" marker-end="url(#arrow)">
+    <path d="M206 214 H270"/>
+    <path d="M428 214 H492"/>
+    <path d="M650 214 H714"/>
+    <path d="M797 260 C797 318 748 340 710 348"/>
+    <path d="M650 394 C540 394 395 360 180 260"/>
+  </g>
+  <g font-family="Arial" font-size="15" fill="#3c4b62">
+    <text x="233" y="198" text-anchor="middle">1. cari IP</text>
+    <text x="464" y="198" text-anchor="middle">2. HTTP request</text>
+    <text x="686" y="198" text-anchor="middle">3. proses</text>
+    <text x="804" y="326" text-anchor="middle">4. query</text>
+    <text x="405" y="414" text-anchor="middle">5. response HTML/CSS/JS</text>
+  </g>
+</svg>

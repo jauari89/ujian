@@ -12,6 +12,7 @@ class AttemptAnswer extends Model
         'display_order',
         'selected_option',
         'selected_options',
+        'essay_answer',
         'is_correct',
         'answered_at',
     ];

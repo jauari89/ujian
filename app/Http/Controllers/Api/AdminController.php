@@ -42,11 +42,13 @@ class AdminController extends Controller
             'questions.*.week' => ['nullable', 'integer', 'min:1', 'max:16'],
             'questions.*.class_name' => ['nullable', 'string', 'max:100'],
             'questions.*.question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots'])],
+            'questions.*.level' => ['nullable', 'string', 'max:30'],
             'questions.*.question_text' => ['required', 'string'],
-            'questions.*.option_a' => ['required', 'string'],
-            'questions.*.option_b' => ['required', 'string'],
-            'questions.*.option_c' => ['required', 'string'],
-            'questions.*.option_d' => ['required', 'string'],
+            'questions.*.image_url' => ['nullable', 'string'],
+            'questions.*.option_a' => ['nullable', 'string'],
+            'questions.*.option_b' => ['nullable', 'string'],
+            'questions.*.option_c' => ['nullable', 'string'],
+            'questions.*.option_d' => ['nullable', 'string'],
             'questions.*.correct_option' => ['nullable', Rule::in(['a', 'b', 'c', 'd'])],
             'questions.*.correct_options' => ['nullable', 'array'],
             'questions.*.correct_options.a' => ['nullable', 'boolean'],
@@ -613,11 +615,13 @@ class AdminController extends Controller
             'week' => ['nullable', 'integer', 'min:1', 'max:16'],
             'class_name' => ['nullable', 'string', 'max:100'],
             'question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots'])],
+            'level' => ['nullable', 'string', 'max:30'],
             'question_text' => ['required', 'string'],
-            'option_a' => ['required', 'string'],
-            'option_b' => ['required', 'string'],
-            'option_c' => ['required', 'string'],
-            'option_d' => ['required', 'string'],
+            'image_url' => ['nullable', 'string'],
+            'option_a' => ['nullable', 'string'],
+            'option_b' => ['nullable', 'string'],
+            'option_c' => ['nullable', 'string'],
+            'option_d' => ['nullable', 'string'],
             'correct_option' => ['nullable', Rule::in(['a', 'b', 'c', 'd'])],
             'correct_options' => ['nullable', 'array'],
             'correct_options.a' => ['nullable', 'boolean'],
@@ -664,11 +668,13 @@ class AdminController extends Controller
         $data = $request->validate([
             'multiple_choice_count' => ['nullable', 'integer', 'min:0', 'max:500'],
             'true_false_count' => ['nullable', 'integer', 'min:0', 'max:500'],
+            'hots_count' => ['nullable', 'integer', 'min:0', 'max:500'],
         ]);
 
         $selection = [
             'multiple_choice' => (int) ($data['multiple_choice_count'] ?? 0),
             'true_false' => (int) ($data['true_false_count'] ?? 0),
+            'hots' => (int) ($data['hots_count'] ?? 0),
         ];
 
         foreach ($selection as $type => $count) {
@@ -678,7 +684,7 @@ class AdminController extends Controller
 
             $available = $this->bankQuestionQuery($examData['course_id'], $examData['class_name'], $type)->count();
             if ($available < $count) {
-                $label = $type === 'true_false' ? 'T/F' : 'ABCD';
+                $label = ['true_false' => 'T/F', 'hots' => 'HOTS'][$type] ?? 'ABCD';
                 throw ValidationException::withMessages([
                     "{$type}_count" => "Bank soal {$label} hanya tersedia {$available}, tidak cukup untuk mengambil {$count} soal.",
                 ]);
@@ -707,7 +713,9 @@ class AdminController extends Controller
                     'class_name' => $sourceQuestion->class_name,
                     'week' => $sourceQuestion->week,
                     'question_type' => $sourceQuestion->question_type,
+                    'level' => $sourceQuestion->level,
                     'question_text' => $sourceQuestion->question_text,
+                    'image_url' => $sourceQuestion->image_url,
                     'option_a' => $sourceQuestion->option_a,
                     'option_b' => $sourceQuestion->option_b,
                     'option_c' => $sourceQuestion->option_c,
@@ -741,7 +749,9 @@ class AdminController extends Controller
             'class_name' => $question->class_name,
             'week' => $question->week,
             'question_type' => $question->question_type ?? 'multiple_choice',
+            'level' => $question->level,
             'question_text' => $question->question_text,
+            'image_url' => $question->image_url,
             'option_a' => $question->option_a,
             'option_b' => $question->option_b,
             'option_c' => $question->option_c,
@@ -756,11 +766,19 @@ class AdminController extends Controller
     {
         $type = $data['question_type'] ?? 'multiple_choice';
         if ($type === 'true_false') {
+            foreach (['option_a', 'option_b', 'option_c', 'option_d'] as $field) {
+                if (empty($data[$field])) {
+                    throw ValidationException::withMessages([$field => 'Pernyataan T/F wajib diisi.']);
+                }
+            }
+
             return [
                 'week' => $data['week'] ?? null,
                 'class_name' => $this->normalizeClassName($data['class_name'] ?? null),
                 'question_type' => 'true_false',
+                'level' => $data['level'] ?? null,
                 'question_text' => $data['question_text'],
+                'image_url' => $data['image_url'] ?? null,
                 'option_a' => $data['option_a'],
                 'option_b' => $data['option_b'],
                 'option_c' => $data['option_c'],
@@ -771,17 +789,41 @@ class AdminController extends Controller
             ];
         }
 
+        if ($type === 'hots') {
+            return [
+                'week' => $data['week'] ?? null,
+                'class_name' => $this->normalizeClassName($data['class_name'] ?? null),
+                'question_type' => 'hots',
+                'level' => $data['level'] ?? 'berat',
+                'question_text' => $data['question_text'],
+                'image_url' => $data['image_url'] ?? null,
+                'option_a' => $data['option_a'] ?? 'Uraikan komponen utama.',
+                'option_b' => $data['option_b'] ?? 'Jelaskan alur kerja.',
+                'option_c' => $data['option_c'] ?? 'Analisis keterkaitan antarbagian.',
+                'option_d' => $data['option_d'] ?? 'Berikan kesimpulan teknis.',
+                'correct_option' => $data['correct_option'] ?? 'a',
+                'correct_options' => null,
+                'explanation' => $data['explanation'] ?? null,
+            ];
+        }
+
+        foreach (['option_a', 'option_b', 'option_c', 'option_d'] as $field) {
+            if (empty($data[$field])) {
+                throw ValidationException::withMessages([$field => 'Opsi ABCD wajib diisi.']);
+            }
+        }
+
         if (empty($data['correct_option'])) {
             throw ValidationException::withMessages(['correct_option' => 'Kunci ABCD wajib diisi.']);
         }
 
-        $normalizedType = $type === 'hots' ? 'hots' : 'multiple_choice';
-
         return [
             'week' => $data['week'] ?? null,
             'class_name' => $this->normalizeClassName($data['class_name'] ?? null),
-            'question_type' => $normalizedType,
+            'question_type' => 'multiple_choice',
+            'level' => $data['level'] ?? null,
             'question_text' => $data['question_text'],
+            'image_url' => $data['image_url'] ?? null,
             'option_a' => $data['option_a'],
             'option_b' => $data['option_b'],
             'option_c' => $data['option_c'],
@@ -824,7 +866,12 @@ class AdminController extends Controller
 
     private function answerHasResponse(AttemptAnswer $answer): bool
     {
-        if (($answer->question?->question_type ?? 'multiple_choice') === 'true_false') {
+        $questionType = $answer->question?->question_type ?? 'multiple_choice';
+        if ($questionType === 'hots') {
+            return trim((string) $answer->essay_answer) !== '';
+        }
+
+        if ($questionType === 'true_false') {
             $selected = $answer->selected_options ?? [];
 
             foreach (['a', 'b', 'c', 'd'] as $key) {

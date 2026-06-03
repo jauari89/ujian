@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#f8fbff"/>
+  <text x="480" y="46" text-anchor="middle" font-family="Arial" font-size="28" font-weight="700" fill="#172033">Cara Kerja Laravel Request Lifecycle</text>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#1a73e8"/></marker></defs>
+  <g font-family="Arial" fill="#172033">
+    <rect x="42" y="160" width="130" height="86" rx="8" fill="#fff" stroke="#8fb4e8" stroke-width="3"/><text x="107" y="197" text-anchor="middle" font-size="18" font-weight="700">Browser</text><text x="107" y="221" text-anchor="middle" font-size="13">Request</text>
+    <rect x="222" y="160" width="130" height="86" rx="8" fill="#fff" stroke="#d28b8b" stroke-width="3"/><text x="287" y="197" text-anchor="middle" font-size="18" font-weight="700">index.php</text><text x="287" y="221" text-anchor="middle" font-size="13">Entry point</text>
+    <rect x="402" y="160" width="130" height="86" rx="8" fill="#fff" stroke="#d28b8b" stroke-width="3"/><text x="467" y="197" text-anchor="middle" font-size="18" font-weight="700">Middleware</text><text x="467" y="221" text-anchor="middle" font-size="13">Filter</text>
+    <rect x="582" y="160" width="130" height="86" rx="8" fill="#fff" stroke="#7bc79a" stroke-width="3"/><text x="647" y="197" text-anchor="middle" font-size="18" font-weight="700">Route</text><text x="647" y="221" text-anchor="middle" font-size="13">web.php</text>
+    <rect x="762" y="160" width="130" height="86" rx="8" fill="#fff" stroke="#7bc79a" stroke-width="3"/><text x="827" y="197" text-anchor="middle" font-size="18" font-weight="700">Controller</text><text x="827" y="221" text-anchor="middle" font-size="13">Logic</text>
+    <rect x="582" y="340" width="130" height="86" rx="8" fill="#fff" stroke="#f0c36a" stroke-width="3"/><text x="647" y="377" text-anchor="middle" font-size="18" font-weight="700">Model</text><text x="647" y="401" text-anchor="middle" font-size="13">Eloquent</text>
+    <rect x="402" y="340" width="130" height="86" rx="8" fill="#fff" stroke="#f0c36a" stroke-width="3"/><text x="467" y="377" text-anchor="middle" font-size="18" font-weight="700">Database</text><text x="467" y="401" text-anchor="middle" font-size="13">MySQL</text>
+    <rect x="222" y="340" width="130" height="86" rx="8" fill="#fff" stroke="#8fb4e8" stroke-width="3"/><text x="287" y="377" text-anchor="middle" font-size="18" font-weight="700">Blade View</text><text x="287" y="401" text-anchor="middle" font-size="13">HTML</text>
+  </g>
+  <g stroke="#1a73e8" stroke-width="4" fill="none" marker-end="url(#arrow)">
+    <path d="M172 203 H214"/><path d="M352 203 H394"/><path d="M532 203 H574"/><path d="M712 203 H754"/>
+    <path d="M827 246 C827 312 718 318 674 340"/><path d="M582 383 H540"/><path d="M402 383 H360"/><path d="M287 340 C250 302 205 266 142 246"/>
+  </g>
+</svg>

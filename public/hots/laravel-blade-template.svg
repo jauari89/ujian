@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#f8fbff"/>
+  <text x="480" y="46" text-anchor="middle" font-family="Arial" font-size="28" font-weight="700" fill="#172033">Cara Kerja Template Tampilan Laravel</text>
+  <g font-family="Arial" fill="#172033">
+    <rect x="90" y="120" width="230" height="350" rx="8" fill="#fff" stroke="#8fb4e8" stroke-width="3"/>
+    <text x="205" y="154" text-anchor="middle" font-size="20" font-weight="700">layout.blade.php</text>
+    <rect x="122" y="184" width="166" height="54" rx="6" fill="#edf5ff" stroke="#8fb4e8"/>
+    <text x="205" y="218" text-anchor="middle" font-size="16">@yield('content')</text>
+    <rect x="122" y="262" width="166" height="54" rx="6" fill="#edf5ff" stroke="#8fb4e8"/>
+    <text x="205" y="296" text-anchor="middle" font-size="16">@include nav</text>
+    <rect x="122" y="340" width="166" height="54" rx="6" fill="#edf5ff" stroke="#8fb4e8"/>
+    <text x="205" y="374" text-anchor="middle" font-size="16">CSS/JS asset</text>
+    <rect x="390" y="120" width="220" height="112" rx="8" fill="#fff" stroke="#7bc79a" stroke-width="3"/>
+    <text x="500" y="160" text-anchor="middle" font-size="20" font-weight="700">Controller</text>
+    <text x="500" y="190" text-anchor="middle" font-size="15">kirim data profil</text>
+    <rect x="390" y="300" width="220" height="112" rx="8" fill="#fff" stroke="#7bc79a" stroke-width="3"/>
+    <text x="500" y="340" text-anchor="middle" font-size="20" font-weight="700">home.blade.php</text>
+    <text x="500" y="370" text-anchor="middle" font-size="15">@extends + @section</text>
+    <rect x="700" y="188" width="210" height="168" rx="8" fill="#fff" stroke="#f0c36a" stroke-width="3"/>
+    <text x="805" y="230" text-anchor="middle" font-size="20" font-weight="700">HTML Final</text>
+    <text x="805" y="262" text-anchor="middle" font-size="15">layout + content</text>
+    <text x="805" y="292" text-anchor="middle" font-size="15">data + asset</text>
+  </g>
+  <g stroke="#1a73e8" stroke-width="4" fill="none" marker-end="url(#arrow)">
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#1a73e8"/></marker></defs>
+    <path d="M390 176 H330"/><path d="M500 232 V292"/><path d="M610 356 C660 330 690 300 700 274"/><path d="M320 296 C430 270 580 260 700 260"/>
+  </g>
+</svg>

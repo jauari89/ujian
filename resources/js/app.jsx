@@ -678,15 +678,25 @@ function AttemptPage() {
 
     const answers = attempt?.answers || [];
     const active = answers[current];
-    const multipleChoiceAnswers = answers.filter((answer) => answer.question?.question_type !== 'true_false');
+    const multipleChoiceAnswers = answers.filter((answer) => !['true_false', 'hots'].includes(answer.question?.question_type));
     const trueFalseAnswers = answers.filter((answer) => answer.question?.question_type === 'true_false');
-    const activePhase = active?.question?.question_type === 'true_false' ? 'true_false' : 'multiple_choice';
-    const phaseAnswers = activePhase === 'true_false' ? trueFalseAnswers : multipleChoiceAnswers;
-    const phaseTitle = activePhase === 'true_false' ? 'Tahap True/False' : 'Tahap ABCD';
+    const hotsAnswers = answers.filter((answer) => answer.question?.question_type === 'hots');
+    const activePhase = active?.question?.question_type === 'true_false'
+        ? 'true_false'
+        : active?.question?.question_type === 'hots'
+            ? 'hots'
+            : 'multiple_choice';
+    const phaseAnswers = activePhase === 'true_false'
+        ? trueFalseAnswers
+        : activePhase === 'hots'
+            ? hotsAnswers
+            : multipleChoiceAnswers;
+    const phaseTitle = activePhase === 'true_false' ? 'Tahap True/False' : activePhase === 'hots' ? 'Tahap HOTS' : 'Tahap ABCD';
     const phaseIndex = phaseAnswers.findIndex((answer) => answer.id === active?.id);
     const multipleChoiceComplete = multipleChoiceAnswers.every(answerIsFilled);
     const firstTrueFalseIndex = answers.findIndex((answer) => answer.question?.question_type === 'true_false');
-    const firstMultipleChoiceIndex = answers.findIndex((answer) => answer.question?.question_type !== 'true_false');
+    const firstHotsIndex = answers.findIndex((answer) => answer.question?.question_type === 'hots');
+    const firstMultipleChoiceIndex = answers.findIndex((answer) => !['true_false', 'hots'].includes(answer.question?.question_type));
     const remaining = useMemo(() => attempt ? Math.max(0, new Date(attempt.ends_at).getTime() - now) : 0, [attempt, now]);
     const warning = remaining <= 5 * 60 * 1000;
     const cameraReady = cameraStatus.state === 'ready';
@@ -838,8 +848,10 @@ function AttemptPage() {
 
     const goToPhase = (phase) => {
         if (phase === 'true_false' && firstTrueFalseIndex < 0) return;
+        if (phase === 'hots' && firstHotsIndex < 0) return;
         if (phase === 'multiple_choice' && firstMultipleChoiceIndex >= 0) setCurrent(firstMultipleChoiceIndex);
         if (phase === 'true_false') setCurrent(firstTrueFalseIndex);
+        if (phase === 'hots') setCurrent(firstHotsIndex);
     };
 
     const choose = async (option) => {
@@ -852,10 +864,12 @@ function AttemptPage() {
             setSaving('Saved');
             const nextAnswers = answers.map((item) => item.id === active.id ? { ...item, selected_option: option, selected_options: null } : item);
             const nextMultipleChoiceComplete = nextAnswers
-                .filter((answer) => answer.question?.question_type !== 'true_false')
+                .filter((answer) => !['true_false', 'hots'].includes(answer.question?.question_type))
                 .every(answerIsFilled);
             if (nextMultipleChoiceComplete && activePhase === 'multiple_choice' && phaseIndex === multipleChoiceAnswers.length - 1 && firstTrueFalseIndex >= 0) {
                 setCurrent(firstTrueFalseIndex);
+            } else if (nextMultipleChoiceComplete && activePhase === 'multiple_choice' && phaseIndex === multipleChoiceAnswers.length - 1 && firstHotsIndex >= 0) {
+                setCurrent(firstHotsIndex);
             }
         } catch (err) {
             setError(err.message);
@@ -870,6 +884,18 @@ function AttemptPage() {
         setSaving('Menyimpan...');
         try {
             await api.post(`/api/attempts/${id}/answer`, { question_id: active.question_id, selected_options: selectedOptions });
+            setSaving('Saved');
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const saveHotsAnswer = async () => {
+        if (!active || attempt.status !== 'in_progress') return;
+        if (!ensureCameraReady()) return;
+        setSaving('Menyimpan...');
+        try {
+            await api.post(`/api/attempts/${id}/answer`, { question_id: active.question_id, essay_answer: active.essay_answer || '' });
             setSaving('Saved');
         } catch (err) {
             setError(err.message);
@@ -916,6 +942,11 @@ function AttemptPage() {
 
         if (activePhase === 'multiple_choice' && firstTrueFalseIndex >= 0) {
             setCurrent(firstTrueFalseIndex);
+            return;
+        }
+
+        if ((activePhase === 'multiple_choice' || activePhase === 'true_false') && firstHotsIndex >= 0) {
+            setCurrent(firstHotsIndex);
         }
     };
 
@@ -968,6 +999,9 @@ function AttemptPage() {
                     <button className={`exam-tab ${activePhase === 'true_false' ? 'active' : ''}`} disabled={trueFalseAnswers.length === 0} onClick={() => goToPhase('true_false')}>
                         True/False <span>{trueFalseAnswers.filter(answerIsFilled).length}/{trueFalseAnswers.length}</span>
                     </button>
+                    <button className={`exam-tab ${activePhase === 'hots' ? 'active' : ''}`} disabled={hotsAnswers.length === 0} onClick={() => goToPhase('hots')}>
+                        HOTS <span>{hotsAnswers.filter(answerIsFilled).length}/{hotsAnswers.length}</span>
+                    </button>
                 </div>
                 {warning && <div className="alert">Waktu kurang dari 5 menit.</div>}
                 {cameraLocked && <div className="alert error">Kamera wajib aktif sebelum menjawab atau submit ujian.</div>}
@@ -978,6 +1012,11 @@ function AttemptPage() {
                     <div className="alert error">Indikasi pelanggaran: person tidak terdeteksi lebih dari 5 peringatan.</div>
                 )}
                 {error && <div className="alert error">{error}</div>}
+                {active.question?.image_url && (
+                    <figure className="question-image-box">
+                        <img src={active.question.image_url} alt={`Gambar soal ${currentNumber}`} />
+                    </figure>
+                )}
                 <p className="question-text">{active.question.question_text}</p>
                 {active.question?.question_type === 'true_false' ? (
                     <div className="tf-answer-list">
@@ -991,6 +1030,19 @@ function AttemptPage() {
                                 </div>
                             </div>
                         ))}
+                    </div>
+                ) : active.question?.question_type === 'hots' ? (
+                    <div className="field hots-answer-box">
+                        <label>Jawaban penjelasan</label>
+                        <textarea
+                            rows="10"
+                            value={active.essay_answer || ''}
+                            disabled={cameraLocked}
+                            onChange={(event) => setAnswerState(active.id, { essay_answer: event.target.value })}
+                            onBlur={saveHotsAnswer}
+                            placeholder="Jelaskan analisis Anda berdasarkan gambar dan konteks soal."
+                        />
+                        <button className="btn secondary" disabled={cameraLocked} onClick={saveHotsAnswer}>Simpan Jawaban HOTS</button>
                     </div>
                 ) : (
                     questionKeys.map((key) => (
@@ -1023,6 +1075,7 @@ function AttemptPage() {
                 </div>
                 <div className="stat-row"><span>ABCD lengkap</span><strong>{multipleChoiceAnswers.filter(answerIsFilled).length}/{multipleChoiceAnswers.length}</strong></div>
                 <div className="stat-row"><span>T/F lengkap</span><strong>{trueFalseAnswers.filter(answerIsFilled).length}/{trueFalseAnswers.length}</strong></div>
+                <div className="stat-row"><span>HOTS lengkap</span><strong>{hotsAnswers.filter(answerIsFilled).length}/{hotsAnswers.length}</strong></div>
                 <button className="btn danger" style={{ width: '100%', marginTop: 18 }} disabled={submitting || cameraLocked} onClick={() => submit(false)}>
                     {submitting ? 'Submit...' : 'Submit'}
                 </button>
@@ -1057,7 +1110,7 @@ function ResultPage() {
                             <tr key={answer.id}>
                                 <td>{index + 1}</td>
                                 <td>{answerDisplay(answer)}</td>
-                                <td>{answer.is_correct ? 'Benar' : 'Salah'}</td>
+                                <td>{answer.question?.question_type === 'hots' ? 'Perlu review' : answer.is_correct ? 'Benar' : 'Salah'}</td>
                             </tr>
                         ))}
                     </tbody>
@@ -1746,7 +1799,9 @@ const emptyQuestionForm = {
     class_name: '',
     week: '',
     question_type: 'multiple_choice',
+    level: '',
     question_text: '',
+    image_url: '',
     option_a: '',
     option_b: '',
     option_c: '',
@@ -1760,7 +1815,7 @@ const questionKeys = ['a', 'b', 'c', 'd'];
 const questionTypeOptions = [
     { type: 'multiple_choice', label: 'ABCD', title: 'Soal ABCD', helper: 'Pilihan A-D dengan satu kunci jawaban.' },
     { type: 'true_false', label: 'T/F', title: 'Soal True/False', helper: 'Pernyataan A-D dengan kunci benar/salah.' },
-    { type: 'hots', label: 'HOTS', title: 'Soal HOTS', helper: 'Pilihan A-D untuk soal penalaran tingkat tinggi.' },
+    { type: 'hots', label: 'HOTS', title: 'Soal HOTS', helper: 'Uraian bergambar untuk analisis tingkat tinggi.' },
 ];
 
 function normalizeQuestionType(type) {
@@ -1777,6 +1832,10 @@ function questionTypeMeta(type) {
 
 function answerIsFilled(answer) {
     if (!answer) return false;
+    if (answer.question?.question_type === 'hots') {
+        return Boolean((answer.essay_answer || '').trim());
+    }
+
     if (answer.question?.question_type === 'true_false') {
         const selected = answer.selected_options || {};
 
@@ -1787,6 +1846,12 @@ function answerIsFilled(answer) {
 }
 
 function answerDisplay(answer) {
+    if (answer.question?.question_type === 'hots') {
+        const value = (answer.essay_answer || '').trim();
+
+        return value ? `${value.slice(0, 80)}${value.length > 80 ? '...' : ''}` : '-';
+    }
+
     if (answer.question?.question_type === 'true_false') {
         const selected = answer.selected_options || {};
 
@@ -1811,7 +1876,7 @@ function AdminImport() {
     const [courses, setCourses] = useState([]);
     const [classes, setClasses] = useState([]);
     const [selectedExamId, setSelectedExamId] = useState('');
-    const [examForm, setExamForm] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, is_active: true, opens_at: '', closes_at: '' });
+    const [examForm, setExamForm] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, hots_count: 0, is_active: true, opens_at: '', closes_at: '' });
     const [settings, setSettings] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
     const [resetClass, setResetClass] = useState('');
     const [questions, setQuestions] = useState([]);
@@ -1907,11 +1972,12 @@ function AdminImport() {
                 duration_minutes: Number(examForm.duration_minutes || 60),
                 multiple_choice_count: Number(examForm.multiple_choice_count || 0),
                 true_false_count: Number(examForm.true_false_count || 0),
+                hots_count: Number(examForm.hots_count || 0),
                 opens_at: examForm.opens_at || null,
                 closes_at: examForm.closes_at || null,
             });
             setMessage(data.message);
-            setExamForm({ course_id: examForm.course_id, title: '', class_name: examForm.class_name, duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, is_active: true, opens_at: '', closes_at: '' });
+            setExamForm({ course_id: examForm.course_id, title: '', class_name: examForm.class_name, duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, hots_count: 0, is_active: true, opens_at: '', closes_at: '' });
             await loadExams();
             setSelectedExamId(String(data.exam.id));
         } catch (err) {
@@ -1991,7 +2057,9 @@ function AdminImport() {
             class_name: question.class_name || '',
             week: question.week || '',
             question_type: nextType,
+            level: question.level || '',
             question_text: question.question_text || '',
+            image_url: question.image_url || '',
             option_a: question.option_a || '',
             option_b: question.option_b || '',
             option_c: question.option_c || '',
@@ -2148,6 +2216,10 @@ function AdminImport() {
                             <label>Ambil T/F dari Bank</label>
                             <input type="number" min="0" max="500" value={examForm.true_false_count} onChange={(event) => setExamForm({ ...examForm, true_false_count: event.target.value })} />
                         </div>
+                        <div className="field">
+                            <label>Ambil HOTS dari Bank</label>
+                            <input type="number" min="0" max="500" value={examForm.hots_count} onChange={(event) => setExamForm({ ...examForm, hots_count: event.target.value })} />
+                        </div>
                         <p className="muted compact-note">Isi 0 jika ujian dibuat kosong lalu soal dimasukkan lewat Import Soal.</p>
                         <button className="btn primary" disabled={busy === 'exam-create'}><Plus size={17} /> Buat Ujian</button>
                     </form>
@@ -2301,6 +2373,8 @@ function AdminImport() {
                                         <small>
                                             {questionTypeLabel(question.question_type)} | Minggu {question.week || '-'} | {question.question_type === 'true_false'
                                                 ? `Benar: ${questionKeys.filter((key) => question.correct_options?.[key]).map((key) => key.toUpperCase()).join(', ') || '-'}`
+                                                : question.question_type === 'hots'
+                                                    ? `Level ${question.level || 'berat'}`
                                                 : `Kunci ${String(question.correct_option || '-').toUpperCase()}`}
                                             {' '}| Kelas {questionClassLabel(question.class_name)}
                                         </small>
@@ -2375,6 +2449,7 @@ function QuestionEditorCard({
     deleteQuestion,
 }) {
     const isTrueFalse = type === 'true_false';
+    const isHots = type === 'hots';
     const meta = questionTypeMeta(type);
     const canSubmit = selectedExam && busy !== 'question';
     const editingThisType = editingQuestion && normalizeQuestionType(editingQuestion.question_type) === type;
@@ -2409,7 +2484,13 @@ function QuestionEditorCard({
                     <label>Minggu</label>
                     <input type="number" min="1" max="16" value={questionForm.week} onChange={(event) => setQuestionForm({ ...questionForm, week: event.target.value, question_type: type })} />
                 </div>
-                {!isTrueFalse && (
+                {isHots && (
+                    <div className="field">
+                        <label>Level</label>
+                        <input value={questionForm.level} onChange={(event) => setQuestionForm({ ...questionForm, level: event.target.value, question_type: type })} placeholder="berat" />
+                    </div>
+                )}
+                {!isTrueFalse && !isHots && (
                     <div className="field">
                         <label>Kunci</label>
                         <select value={questionForm.correct_option} onChange={(event) => setQuestionForm({ ...questionForm, correct_option: event.target.value, question_type: type })}>
@@ -2422,12 +2503,19 @@ function QuestionEditorCard({
                 )}
             </div>
 
+            {isHots && (
+                <div className="field">
+                    <label>URL Gambar</label>
+                    <input value={questionForm.image_url} onChange={(event) => setQuestionForm({ ...questionForm, image_url: event.target.value, question_type: type })} placeholder="/hots/web-server-architecture.svg" />
+                </div>
+            )}
+
             <div className="field">
-                <label>{isTrueFalse ? 'Instruksi / Pertanyaan Utama' : 'Pertanyaan'}</label>
+                <label>{isTrueFalse ? 'Instruksi / Pertanyaan Utama' : isHots ? 'Instruksi Analisis' : 'Pertanyaan'}</label>
                 <textarea rows="4" value={questionForm.question_text} onChange={(event) => setQuestionForm({ ...questionForm, question_text: event.target.value, question_type: type })} required />
             </div>
 
-            {questionKeys.map((option) => (
+            {!isHots && questionKeys.map((option) => (
                 <div className="field" key={option}>
                     <label>{isTrueFalse ? `Pernyataan ${option.toUpperCase()}` : `Opsi ${option.toUpperCase()}`}</label>
                     <textarea rows="2" value={questionForm[`option_${option}`]} onChange={(event) => setQuestionForm({ ...questionForm, [`option_${option}`]: event.target.value, question_type: type })} required />
@@ -2449,7 +2537,7 @@ function QuestionEditorCard({
             ))}
 
             <div className="field">
-                <label>Pembahasan</label>
+                <label>{isHots ? 'Pedoman Jawaban' : 'Pembahasan'}</label>
                 <textarea rows="3" value={questionForm.explanation} onChange={(event) => setQuestionForm({ ...questionForm, explanation: event.target.value, question_type: type })} />
             </div>
 

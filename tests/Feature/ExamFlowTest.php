@@ -470,6 +470,52 @@ class ExamFlowTest extends TestCase
         $this->assertSame(1, $trueFalseAnalysis['correct_total']);
     }
 
+    public function test_hots_question_accepts_essay_answer_and_is_not_auto_scored(): void
+    {
+        [$student, $exam] = $this->seedExam();
+        $hotsQuestion = Question::create([
+            'exam_id' => $exam->id,
+            'week' => 16,
+            'question_type' => 'hots',
+            'level' => 'berat',
+            'question_text' => 'Jelaskan cara kerja Laravel berdasarkan gambar.',
+            'image_url' => '/hots/laravel-request-lifecycle.svg',
+            'option_a' => 'Uraikan komponen utama.',
+            'option_b' => 'Jelaskan alur kerja.',
+            'option_c' => 'Analisis keterkaitan antarbagian.',
+            'option_d' => 'Berikan kesimpulan teknis.',
+            'correct_option' => 'a',
+            'explanation' => 'Request, route, controller, model, view, response.',
+        ]);
+
+        $attemptId = $this->actingAs($student)->postJson("/api/exams/{$exam->id}/start")
+            ->assertCreated()
+            ->json('attempt.id');
+
+        $attemptPayload = $this->actingAs($student)->getJson("/api/attempts/{$attemptId}")
+            ->assertOk()
+            ->json('attempt');
+        $hotsAnswer = collect($attemptPayload['answers'])->firstWhere('question_id', $hotsQuestion->id);
+        $this->assertSame('/hots/laravel-request-lifecycle.svg', $hotsAnswer['question']['image_url']);
+
+        $essay = 'Request masuk ke route, diteruskan controller, mengambil data model, lalu view Blade dirender menjadi response.';
+        $this->actingAs($student)->postJson("/api/attempts/{$attemptId}/answer", [
+            'question_id' => $hotsQuestion->id,
+            'essay_answer' => $essay,
+        ])->assertOk()
+            ->assertJsonPath('answer.essay_answer', $essay);
+
+        $this->actingAs($student)->postJson("/api/attempts/{$attemptId}/submit")
+            ->assertOk()
+            ->assertJsonPath('attempt.total_questions', 2);
+
+        $this->assertDatabaseHas('attempt_answers', [
+            'attempt_id' => $attemptId,
+            'question_id' => $hotsQuestion->id,
+            'is_correct' => null,
+        ]);
+    }
+
     public function test_admin_can_manage_courses_and_active_exam_can_be_filtered(): void
     {
         $admin = User::create([
@@ -657,6 +703,21 @@ class ExamFlowTest extends TestCase
             ]);
         }
 
+        Question::create([
+            'exam_id' => $sourceExam->id,
+            'week' => 3,
+            'question_type' => 'hots',
+            'level' => 'berat',
+            'question_text' => 'Jelaskan arsitektur web server.',
+            'image_url' => '/hots/web-server-architecture.svg',
+            'option_a' => 'Uraikan komponen utama.',
+            'option_b' => 'Jelaskan alur kerja.',
+            'option_c' => 'Analisis keterkaitan antarbagian.',
+            'option_d' => 'Berikan kesimpulan teknis.',
+            'correct_option' => 'a',
+            'explanation' => 'Browser, web server, backend, database, response.',
+        ]);
+
         $newExam = $this->actingAs($admin)->postJson('/api/admin/exams', [
             'course_id' => $course->id,
             'title' => 'Quiz Campuran Desain Web',
@@ -664,14 +725,16 @@ class ExamFlowTest extends TestCase
             'is_active' => true,
             'multiple_choice_count' => 2,
             'true_false_count' => 1,
+            'hots_count' => 1,
         ])->assertCreated()
-            ->assertJsonPath('exam.questions_count', 3)
+            ->assertJsonPath('exam.questions_count', 4)
             ->json('exam');
 
         $this->assertSame(2, Question::where('exam_id', $newExam['id'])->where('question_type', 'multiple_choice')->count());
         $this->assertSame(1, Question::where('exam_id', $newExam['id'])->where('question_type', 'true_false')->count());
+        $this->assertSame(1, Question::where('exam_id', $newExam['id'])->where('question_type', 'hots')->count());
         $this->assertSame(3, ExamPackage::where('exam_id', $newExam['id'])->count());
-        $this->assertSame(3, ExamPackage::where('exam_id', $newExam['id'])->first()->questions()->count());
+        $this->assertSame(4, ExamPackage::where('exam_id', $newExam['id'])->first()->questions()->count());
 
         $this->actingAs($admin)->postJson('/api/admin/exams', [
             'course_id' => $course->id,
@@ -680,6 +743,7 @@ class ExamFlowTest extends TestCase
             'is_active' => true,
             'multiple_choice_count' => 0,
             'true_false_count' => 0,
+            'hots_count' => 0,
         ])->assertCreated()
             ->assertJsonPath('exam.questions_count', 0);
 
@@ -690,6 +754,7 @@ class ExamFlowTest extends TestCase
             'is_active' => true,
             'multiple_choice_count' => 99,
             'true_false_count' => 0,
+            'hots_count' => 0,
         ])->assertUnprocessable();
     }
 

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#f8fbff"/>
+  <text x="480" y="46" text-anchor="middle" font-family="Arial" font-size="28" font-weight="700" fill="#172033">Alur Mengganti Template Portfolio/CV</text>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#1a73e8"/></marker></defs>
+  <g font-family="Arial" fill="#172033" font-size="16">
+    <rect x="50" y="160" width="150" height="92" rx="8" fill="#fff" stroke="#8fb4e8" stroke-width="3"/><text x="125" y="197" text-anchor="middle" font-weight="700">Template Lama</text><text x="125" y="224" text-anchor="middle" font-size="13">Blade + asset</text>
+    <rect x="260" y="160" width="150" height="92" rx="8" fill="#fff" stroke="#7bc79a" stroke-width="3"/><text x="335" y="197" text-anchor="middle" font-weight="700">Template Baru</text><text x="335" y="224" text-anchor="middle" font-size="13">HTML/CSS/JS</text>
+    <rect x="470" y="160" width="150" height="92" rx="8" fill="#fff" stroke="#f0c36a" stroke-width="3"/><text x="545" y="197" text-anchor="middle" font-weight="700">Mapping</text><text x="545" y="224" text-anchor="middle" font-size="13">section data</text>
+    <rect x="680" y="160" width="150" height="92" rx="8" fill="#fff" stroke="#d28b8b" stroke-width="3"/><text x="755" y="197" text-anchor="middle" font-weight="700">Blade Baru</text><text x="755" y="224" text-anchor="middle" font-size="13">layout rapi</text>
+    <rect x="260" y="340" width="150" height="92" rx="8" fill="#fff" stroke="#8fb4e8" stroke-width="3"/><text x="335" y="377" text-anchor="middle" font-weight="700">Asset</text><text x="335" y="404" text-anchor="middle" font-size="13">public/Vite</text>
+    <rect x="470" y="340" width="150" height="92" rx="8" fill="#fff" stroke="#7bc79a" stroke-width="3"/><text x="545" y="377" text-anchor="middle" font-weight="700">Data Dinamis</text><text x="545" y="404" text-anchor="middle" font-size="13">profil/proyek</text>
+    <rect x="680" y="340" width="150" height="92" rx="8" fill="#fff" stroke="#f0c36a" stroke-width="3"/><text x="755" y="377" text-anchor="middle" font-weight="700">Testing</text><text x="755" y="404" text-anchor="middle" font-size="13">route/responsive</text>
+  </g>
+  <g stroke="#1a73e8" stroke-width="4" fill="none" marker-end="url(#arrow)">
+    <path d="M200 206 H252"/><path d="M410 206 H462"/><path d="M620 206 H672"/><path d="M755 252 V332"/>
+    <path d="M410 386 H462"/><path d="M620 386 H672"/><path d="M335 340 C370 290 445 262 500 252"/>
+  </g>
+</svg>

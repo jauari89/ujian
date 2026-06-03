@@ -25,7 +25,7 @@ class AttemptController extends Controller
             'exam:id,course_id,title,duration_minutes',
             'exam.course:id,name,slug',
             'package:id,name,code',
-            'answers.question:id,exam_id,week,question_type,question_text,option_a,option_b,option_c,option_d',
+            'answers.question:id,exam_id,week,question_type,level,question_text,image_url,option_a,option_b,option_c,option_d',
         ]);
 
         return response()->json(['attempt' => $attempt]);
@@ -51,7 +51,8 @@ class AttemptController extends Controller
             ->with('question')
             ->firstOrFail();
 
-        if (($answer->question->question_type ?? 'multiple_choice') === 'true_false') {
+        $questionType = $answer->question->question_type ?? 'multiple_choice';
+        if ($questionType === 'true_false') {
             $tfData = $request->validate([
                 'selected_options' => ['required', 'array'],
                 'selected_options.a' => ['nullable', 'boolean'],
@@ -63,6 +64,18 @@ class AttemptController extends Controller
             $answer->update([
                 'selected_option' => null,
                 'selected_options' => $this->normalizeBooleanOptions($tfData['selected_options']),
+                'essay_answer' => null,
+                'answered_at' => now(),
+            ]);
+        } elseif ($questionType === 'hots') {
+            $essayData = $request->validate([
+                'essay_answer' => ['required', 'string', 'max:10000'],
+            ]);
+
+            $answer->update([
+                'selected_option' => null,
+                'selected_options' => null,
+                'essay_answer' => $essayData['essay_answer'],
                 'answered_at' => now(),
             ]);
         } else {
@@ -73,6 +86,7 @@ class AttemptController extends Controller
             $answer->update([
                 'selected_option' => $choiceData['selected_option'],
                 'selected_options' => null,
+                'essay_answer' => null,
                 'answered_at' => now(),
             ]);
         }
@@ -144,7 +158,7 @@ class AttemptController extends Controller
             'exam:id,course_id,title,duration_minutes',
             'exam.course:id,name,slug',
             'package:id,name,code',
-            'answers.question:id,exam_id,week,question_type,question_text,option_a,option_b,option_c,option_d',
+            'answers.question:id,exam_id,week,question_type,level,question_text,image_url,option_a,option_b,option_c,option_d',
         ]);
 
         return response()->json([
@@ -228,14 +242,18 @@ class AttemptController extends Controller
         $attempt->load('answers.question', 'exam.course');
 
         $score = 0;
+        $scoredTotal = 0;
         foreach ($attempt->answers as $answer) {
             $isCorrect = $this->answerIsCorrect($answer);
             $answer->update(['is_correct' => $isCorrect]);
-            $score += $isCorrect ? 1 : 0;
+            if ($isCorrect !== null) {
+                $scoredTotal++;
+                $score += $isCorrect ? 1 : 0;
+            }
         }
 
-        $percentage = $attempt->answers->count() > 0
-            ? round(($score / $attempt->answers->count()) * 100, 2)
+        $percentage = $scoredTotal > 0
+            ? round(($score / $scoredTotal) * 100, 2)
             : 0;
         $grade = $this->gradeFor($attempt, $percentage);
 
@@ -247,7 +265,7 @@ class AttemptController extends Controller
             'letter_grade' => $grade?->letter_grade,
             'numeric_grade' => $grade?->numeric_grade,
             'grade_category' => $grade?->category,
-            'total_questions' => $attempt->answers->count(),
+            'total_questions' => $scoredTotal ?: $attempt->answers->count(),
         ]);
 
         return $attempt->refresh();
@@ -271,9 +289,14 @@ class AttemptController extends Controller
             ->first(fn (GradeScale $scale) => $scale->contains($percentage));
     }
 
-    private function answerIsCorrect(AttemptAnswer $answer): bool
+    private function answerIsCorrect(AttemptAnswer $answer): ?bool
     {
-        if (($answer->question->question_type ?? 'multiple_choice') === 'true_false') {
+        $questionType = $answer->question->question_type ?? 'multiple_choice';
+        if ($questionType === 'hots') {
+            return null;
+        }
+
+        if ($questionType === 'true_false') {
             $selected = $this->normalizeBooleanOptions($answer->selected_options ?? []);
             $correct = $this->normalizeBooleanOptions($answer->question->correct_options ?? []);
 

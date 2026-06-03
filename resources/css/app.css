@@ -991,6 +991,34 @@ h3 {
     margin: 0 0 20px;
 }
 
+.question-image-box {
+    margin: 0 0 18px;
+    padding: 10px;
+    border: 1px solid #d2dce9;
+    border-radius: 8px;
+    background: #f8fbff;
+}
+
+.question-image-box img {
+    display: block;
+    width: 100%;
+    max-height: 420px;
+    object-fit: contain;
+    border-radius: 6px;
+    background: white;
+}
+
+.hots-answer-box {
+    display: grid;
+    gap: 10px;
+}
+
+.hots-answer-box textarea {
+    width: 100%;
+    min-height: 220px;
+    resize: vertical;
+}
+
 .option {
     display: grid;
     grid-template-columns: 34px 1fr;
