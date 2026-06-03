@@ -1811,7 +1811,7 @@ function AdminImport() {
     const [courses, setCourses] = useState([]);
     const [classes, setClasses] = useState([]);
     const [selectedExamId, setSelectedExamId] = useState('');
-    const [examForm, setExamForm] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
+    const [examForm, setExamForm] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, is_active: true, opens_at: '', closes_at: '' });
     const [settings, setSettings] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
     const [resetClass, setResetClass] = useState('');
     const [questions, setQuestions] = useState([]);
@@ -1905,11 +1905,13 @@ function AdminImport() {
                 course_id: Number(examForm.course_id),
                 class_name: examForm.class_name || null,
                 duration_minutes: Number(examForm.duration_minutes || 60),
+                multiple_choice_count: Number(examForm.multiple_choice_count || 0),
+                true_false_count: Number(examForm.true_false_count || 0),
                 opens_at: examForm.opens_at || null,
                 closes_at: examForm.closes_at || null,
             });
             setMessage(data.message);
-            setExamForm({ course_id: examForm.course_id, title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
+            setExamForm({ course_id: examForm.course_id, title: '', class_name: examForm.class_name, duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, is_active: true, opens_at: '', closes_at: '' });
             await loadExams();
             setSelectedExamId(String(data.exam.id));
         } catch (err) {
@@ -2138,6 +2140,15 @@ function AdminImport() {
                             <label>Durasi</label>
                             <input type="number" min="1" max="300" value={examForm.duration_minutes} onChange={(event) => setExamForm({ ...examForm, duration_minutes: event.target.value })} required />
                         </div>
+                        <div className="field">
+                            <label>Ambil ABCD dari Bank</label>
+                            <input type="number" min="0" max="500" value={examForm.multiple_choice_count} onChange={(event) => setExamForm({ ...examForm, multiple_choice_count: event.target.value })} />
+                        </div>
+                        <div className="field">
+                            <label>Ambil T/F dari Bank</label>
+                            <input type="number" min="0" max="500" value={examForm.true_false_count} onChange={(event) => setExamForm({ ...examForm, true_false_count: event.target.value })} />
+                        </div>
+                        <p className="muted compact-note">Isi 0 jika ujian dibuat kosong lalu soal dimasukkan lewat Import Soal.</p>
                         <button className="btn primary" disabled={busy === 'exam-create'}><Plus size={17} /> Buat Ujian</button>
                     </form>
 

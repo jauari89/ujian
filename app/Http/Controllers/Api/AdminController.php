@@ -128,16 +128,21 @@ class AdminController extends Controller
     public function storeExam(Request $request)
     {
         $data = $this->examData($request);
+        $selection = $this->questionSelectionData($request, $data);
 
-        $exam = DB::transaction(function () use ($data) {
+        $copiedCount = 0;
+        $exam = DB::transaction(function () use ($data, $selection, &$copiedCount) {
             $exam = Exam::create($data);
+            $copiedCount = $this->copyQuestionsFromBank($exam, $selection);
             ExamPackage::ensureDefaultPackagesForExam($exam);
 
             return $exam;
         });
 
         return response()->json([
-            'message' => 'Ujian berhasil dibuat.',
+            'message' => $copiedCount > 0
+                ? "Ujian berhasil dibuat dengan {$copiedCount} soal dari bank."
+                : 'Ujian berhasil dibuat.',
             'exam' => $this->examPayload($exam->fresh(['course'])->loadCount(['questions', 'attempts'])),
         ], 201);
     }
@@ -652,6 +657,80 @@ class AdminController extends Controller
         $data['class_name'] = $this->normalizeClassName($data['class_name'] ?? $exam?->class_name);
 
         return $data;
+    }
+
+    private function questionSelectionData(Request $request, array $examData): array
+    {
+        $data = $request->validate([
+            'multiple_choice_count' => ['nullable', 'integer', 'min:0', 'max:500'],
+            'true_false_count' => ['nullable', 'integer', 'min:0', 'max:500'],
+        ]);
+
+        $selection = [
+            'multiple_choice' => (int) ($data['multiple_choice_count'] ?? 0),
+            'true_false' => (int) ($data['true_false_count'] ?? 0),
+        ];
+
+        foreach ($selection as $type => $count) {
+            if ($count === 0) {
+                continue;
+            }
+
+            $available = $this->bankQuestionQuery($examData['course_id'], $examData['class_name'], $type)->count();
+            if ($available < $count) {
+                $label = $type === 'true_false' ? 'T/F' : 'ABCD';
+                throw ValidationException::withMessages([
+                    "{$type}_count" => "Bank soal {$label} hanya tersedia {$available}, tidak cukup untuk mengambil {$count} soal.",
+                ]);
+            }
+        }
+
+        return $selection;
+    }
+
+    private function copyQuestionsFromBank(Exam $exam, array $selection): int
+    {
+        $copied = 0;
+
+        foreach ($selection as $type => $count) {
+            if ($count === 0) {
+                continue;
+            }
+
+            $sourceQuestions = $this->bankQuestionQuery($exam->course_id, $exam->class_name, $type)
+                ->inRandomOrder()
+                ->limit($count)
+                ->get();
+
+            foreach ($sourceQuestions as $sourceQuestion) {
+                $exam->questions()->create([
+                    'class_name' => $sourceQuestion->class_name,
+                    'week' => $sourceQuestion->week,
+                    'question_type' => $sourceQuestion->question_type,
+                    'question_text' => $sourceQuestion->question_text,
+                    'option_a' => $sourceQuestion->option_a,
+                    'option_b' => $sourceQuestion->option_b,
+                    'option_c' => $sourceQuestion->option_c,
+                    'option_d' => $sourceQuestion->option_d,
+                    'correct_option' => $sourceQuestion->correct_option,
+                    'correct_options' => $sourceQuestion->correct_options,
+                    'explanation' => $sourceQuestion->explanation,
+                ]);
+                $copied++;
+            }
+        }
+
+        return $copied;
+    }
+
+    private function bankQuestionQuery(int $courseId, ?string $className, string $type)
+    {
+        return Question::query()
+            ->where('question_type', $type)
+            ->whereHas('exam', fn ($exam) => $exam->where('course_id', $courseId))
+            ->where(fn ($questions) => $questions
+                ->whereNull('class_name')
+                ->when($className, fn ($questions, $className) => $questions->orWhere('class_name', $className)));
     }
 
     private function questionPayload(Question $question): array

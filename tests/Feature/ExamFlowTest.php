@@ -606,6 +606,93 @@ class ExamFlowTest extends TestCase
         $this->assertDatabaseMissing('exams', ['id' => $classAExam['id']]);
     }
 
+    public function test_admin_can_create_exam_from_existing_question_bank_counts(): void
+    {
+        $admin = User::create([
+            'name' => 'Admin',
+            'email' => 'admin@pens.local',
+            'password' => Hash::make('Admin123!'),
+            'role' => 'admin',
+        ]);
+
+        $course = Course::create([
+            'name' => 'Desain Web',
+            'slug' => 'desain-web',
+            'is_active' => true,
+        ]);
+
+        $sourceExam = Exam::create([
+            'course_id' => $course->id,
+            'title' => 'Bank Desain Web',
+            'duration_minutes' => 60,
+            'is_active' => true,
+        ]);
+
+        foreach (range(1, 3) as $number) {
+            Question::create([
+                'exam_id' => $sourceExam->id,
+                'week' => $number,
+                'question_type' => 'multiple_choice',
+                'question_text' => "ABCD {$number}",
+                'option_a' => 'A',
+                'option_b' => 'B',
+                'option_c' => 'C',
+                'option_d' => 'D',
+                'correct_option' => 'a',
+            ]);
+        }
+
+        foreach (range(1, 2) as $number) {
+            Question::create([
+                'exam_id' => $sourceExam->id,
+                'week' => $number,
+                'question_type' => 'true_false',
+                'question_text' => "TF {$number}",
+                'option_a' => 'A benar',
+                'option_b' => 'B salah',
+                'option_c' => 'C benar',
+                'option_d' => 'D salah',
+                'correct_option' => 'a',
+                'correct_options' => ['a' => true, 'b' => false, 'c' => true, 'd' => false],
+            ]);
+        }
+
+        $newExam = $this->actingAs($admin)->postJson('/api/admin/exams', [
+            'course_id' => $course->id,
+            'title' => 'Quiz Campuran Desain Web',
+            'duration_minutes' => 45,
+            'is_active' => true,
+            'multiple_choice_count' => 2,
+            'true_false_count' => 1,
+        ])->assertCreated()
+            ->assertJsonPath('exam.questions_count', 3)
+            ->json('exam');
+
+        $this->assertSame(2, Question::where('exam_id', $newExam['id'])->where('question_type', 'multiple_choice')->count());
+        $this->assertSame(1, Question::where('exam_id', $newExam['id'])->where('question_type', 'true_false')->count());
+        $this->assertSame(3, ExamPackage::where('exam_id', $newExam['id'])->count());
+        $this->assertSame(3, ExamPackage::where('exam_id', $newExam['id'])->first()->questions()->count());
+
+        $this->actingAs($admin)->postJson('/api/admin/exams', [
+            'course_id' => $course->id,
+            'title' => 'Quiz Kosong Import Manual',
+            'duration_minutes' => 30,
+            'is_active' => true,
+            'multiple_choice_count' => 0,
+            'true_false_count' => 0,
+        ])->assertCreated()
+            ->assertJsonPath('exam.questions_count', 0);
+
+        $this->actingAs($admin)->postJson('/api/admin/exams', [
+            'course_id' => $course->id,
+            'title' => 'Quiz Melebihi Bank',
+            'duration_minutes' => 30,
+            'is_active' => true,
+            'multiple_choice_count' => 99,
+            'true_false_count' => 0,
+        ])->assertUnprocessable();
+    }
+
     public function test_admin_can_read_master_data_summary(): void
     {
         [$student, $exam] = $this->seedExam();
