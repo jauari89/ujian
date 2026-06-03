@@ -96,6 +96,7 @@ function App() {
 
 function Shell({ children, user, setUser }) {
     const navigate = useNavigate();
+    const location = useLocation();
     const logout = async () => {
         await api.post('/api/auth/logout');
         setUser(null);
@@ -115,7 +116,7 @@ function Shell({ children, user, setUser }) {
                     </div>
                 )}
             </header>
-            <main className={`container ${user?.role === 'admin' ? 'admin-container' : ''}`}>{children}</main>
+            <main className={`container ${user?.role === 'admin' ? 'admin-container' : ''} ${location.pathname.startsWith('/attempt/') ? 'attempt-container' : ''}`}>{children}</main>
         </div>
     );
 }
@@ -469,14 +470,14 @@ function ExamHome() {
 
     if (!courseSlug) return <Navigate to="/courses" />;
 
-    const start = async () => {
-        setBusy(true);
+    const start = async (examItem) => {
+        setBusy(examItem.id);
         setError('');
         try {
-            const result = await api.post(`/api/exams/${data.exam.id}/start`);
+            const result = await api.post(`/api/exams/${examItem.id}/start`);
             navigate(`/attempt/${result.attempt.id}`);
         } catch (err) {
-            if (err.message.includes('Attempt') && data.attempt) navigate(`/attempt/${data.attempt.id}`);
+            if (err.message.includes('Attempt') && examItem.attempt) navigate(`/attempt/${examItem.attempt.id}`);
             setError(err.message);
         } finally {
             setBusy(false);
@@ -486,29 +487,51 @@ function ExamHome() {
     if (error && !data) return <div className="alert error">{error}</div>;
     if (!data) return <div>Memuat ujian...</div>;
 
-    const hasQuestions = data.exam.question_count > 0;
-    const submitted = data.attempt && data.attempt.status !== 'in_progress';
+    const examItems = data.exams?.length
+        ? data.exams
+        : data.exam
+            ? [{ ...data.exam, attempt: data.attempt }]
+            : [];
+    const courseName = examItems[0]?.course?.name;
 
     return (
-        <div className="grid two">
+        <div className="grid">
             <section className="panel">
-                <h1>{data.exam.title}</h1>
-                {data.exam.course && <p className="muted">Mata kuliah: {data.exam.course.name}</p>}
-                <p>Durasi ujian {data.exam.duration_minutes} menit sejak tombol Start ditekan. Timer mengikuti server, jadi refresh halaman tidak mengulang waktu.</p>
-                {!hasQuestions && <div className="alert">Soal belum diimport.</div>}
-                {error && <div className="alert error">{error}</div>}
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    {data.attempt && !submitted && <button className="btn primary" onClick={() => navigate(`/attempt/${data.attempt.id}`)}>Lanjutkan Attempt</button>}
-                    {submitted && <button className="btn primary" onClick={() => navigate(`/result/${data.attempt.id}`)}>Lihat Hasil</button>}
-                    {!data.attempt && <button className="btn primary" disabled={!hasQuestions || busy} onClick={start}>Start</button>}
+                <div className="section-head">
+                    <div>
+                        <h1>{courseName || 'Ujian Aktif'}</h1>
+                        <p className="muted">Pilih ujian aktif yang akan dikerjakan. Setiap ujian punya attempt dan timer masing-masing.</p>
+                    </div>
                     <button className="btn secondary" onClick={() => navigate('/courses')}>Ganti Mata Kuliah</button>
                 </div>
+                {error && <div className="alert error">{error}</div>}
+                <div className="exam-choice-grid">
+                    {examItems.map((examItem) => {
+                        const hasQuestions = examItem.question_count > 0;
+                        const submitted = examItem.attempt && examItem.attempt.status !== 'in_progress';
+
+                        return (
+                            <article className="exam-choice-card" key={examItem.id}>
+                                <div>
+                                    <h2>{examItem.title}</h2>
+                                    <p className="muted">Durasi {examItem.duration_minutes} menit sejak Start ditekan.</p>
+                                </div>
+                                {!hasQuestions && <div className="alert">Soal belum diimport untuk kelas ini.</div>}
+                                <div className="exam-choice-stats">
+                                    <div className="stat-row"><span>Jumlah soal</span><strong>{examItem.question_count}</strong></div>
+                                    <div className="stat-row"><span>Status</span><strong>{examItem.attempt?.status || 'belum mulai'}</strong></div>
+                                    <div className="stat-row"><span>Paket</span><strong>{examItem.package_count || 0}</strong></div>
+                                </div>
+                                <div className="action-row">
+                                    {examItem.attempt && !submitted && <button className="btn primary" onClick={() => navigate(`/attempt/${examItem.attempt.id}`)}>Lanjutkan Attempt</button>}
+                                    {submitted && <button className="btn primary" onClick={() => navigate(`/result/${examItem.attempt.id}`)}>Lihat Hasil</button>}
+                                    {!examItem.attempt && <button className="btn primary" disabled={!hasQuestions || busy === examItem.id} onClick={() => start(examItem)}>{busy === examItem.id ? 'Start...' : 'Start'}</button>}
+                                </div>
+                            </article>
+                        );
+                    })}
+                </div>
             </section>
-            <aside className="panel">
-                <div className="stat-row"><span>Jumlah soal</span><strong>{data.exam.question_count}</strong></div>
-                <div className="stat-row"><span>Status</span><strong>{data.attempt?.status || 'belum mulai'}</strong></div>
-                <div className="stat-row"><span>Durasi</span><strong>{data.exam.duration_minutes} menit</strong></div>
-            </aside>
         </div>
     );
 }
@@ -898,6 +921,38 @@ function AttemptPage() {
 
     return (
         <div className="exam-layout">
+            <aside className="panel attempt-side attempt-camera-panel">
+                <div className={`camera-card ${cameraReady ? 'ready' : 'locked'}`}>
+                    <div className="camera-head">
+                        <strong><Camera size={17} /> Kamera Ujian</strong>
+                        <span className={`camera-pill ${cameraReady ? 'ready' : 'locked'}`}>{cameraLabel}</span>
+                    </div>
+                    <div className="camera-preview">
+                        <video ref={videoRef} autoPlay muted playsInline />
+                        {!cameraReady && (
+                            <div className="camera-placeholder">
+                                <CameraOff size={26} />
+                                <span>Kamera belum aktif</span>
+                            </div>
+                        )}
+                    </div>
+                    <p className="muted">{cameraStatus.message}</p>
+                    <div className="proctor-rule-box">
+                        <div className="stat-row"><span>Rule 1 person</span><strong>{proctorPersonLabel}</strong></div>
+                        <div className="stat-row"><span>Counter absen</span><strong>{proctorState.absenceSeconds}/{PROCTOR_ABSENCE_LIMIT_SECONDS}s</strong></div>
+                        <div className="stat-row"><span>Peringatan</span><strong>{proctorState.warningCount}/{PROCTOR_WARNING_LIMIT}</strong></div>
+                        <div className="stat-row"><span>Status</span><strong>{proctorState.violation ? 'Pelanggaran' : 'Aman'}</strong></div>
+                        <p className="muted">{proctorState.message}</p>
+                    </div>
+                    {!cameraReady && (
+                        <button className="btn primary" style={{ width: '100%' }} disabled={cameraBusy} onClick={startCamera}>
+                            {cameraBusy ? 'Menyalakan...' : 'Nyalakan Kamera'}
+                        </button>
+                    )}
+                </div>
+                <div className="stat-row"><span>Paket</span><strong>{attempt.package?.code || '-'}</strong></div>
+                <div className="stat-row"><span>Pola acak</span><strong>{attempt.shuffle_pattern || '-'}/10</strong></div>
+            </aside>
             <section className="panel">
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', marginBottom: 18 }}>
                     <div>
@@ -953,37 +1008,7 @@ function AttemptPage() {
                     <button className="btn secondary" onClick={nextInPhase}>Berikutnya</button>
                 </div>
             </section>
-            <aside className="panel">
-                <div className={`camera-card ${cameraReady ? 'ready' : 'locked'}`}>
-                    <div className="camera-head">
-                        <strong><Camera size={17} /> Kamera Ujian</strong>
-                        <span className={`camera-pill ${cameraReady ? 'ready' : 'locked'}`}>{cameraLabel}</span>
-                    </div>
-                    <div className="camera-preview">
-                        <video ref={videoRef} autoPlay muted playsInline />
-                        {!cameraReady && (
-                            <div className="camera-placeholder">
-                                <CameraOff size={26} />
-                                <span>Kamera belum aktif</span>
-                            </div>
-                        )}
-                    </div>
-                    <p className="muted">{cameraStatus.message}</p>
-                    <div className="proctor-rule-box">
-                        <div className="stat-row"><span>Rule 1 person</span><strong>{proctorPersonLabel}</strong></div>
-                        <div className="stat-row"><span>Counter absen</span><strong>{proctorState.absenceSeconds}/{PROCTOR_ABSENCE_LIMIT_SECONDS}s</strong></div>
-                        <div className="stat-row"><span>Peringatan</span><strong>{proctorState.warningCount}/{PROCTOR_WARNING_LIMIT}</strong></div>
-                        <div className="stat-row"><span>Status</span><strong>{proctorState.violation ? 'Pelanggaran' : 'Aman'}</strong></div>
-                        <p className="muted">{proctorState.message}</p>
-                    </div>
-                    {!cameraReady && (
-                        <button className="btn primary" style={{ width: '100%' }} disabled={cameraBusy} onClick={startCamera}>
-                            {cameraBusy ? 'Menyalakan...' : 'Nyalakan Kamera'}
-                        </button>
-                    )}
-                </div>
-                <div className="stat-row"><span>Paket</span><strong>{attempt.package?.code || '-'}</strong></div>
-                <div className="stat-row"><span>Pola acak</span><strong>{attempt.shuffle_pattern || '-'}/10</strong></div>
+            <aside className="panel attempt-side attempt-nav-panel">
                 <h3>Navigasi {questionTypeLabel(active.question?.question_type)}</h3>
                 <div className="nav-grid">
                     {phaseAnswers.map((answer, index) => (
@@ -1783,9 +1808,11 @@ function AdminImport() {
     const [message, setMessage] = useState('');
     const [attempts, setAttempts] = useState([]);
     const [exams, setExams] = useState([]);
+    const [courses, setCourses] = useState([]);
     const [classes, setClasses] = useState([]);
     const [selectedExamId, setSelectedExamId] = useState('');
-    const [settings, setSettings] = useState({ duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
+    const [examForm, setExamForm] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
+    const [settings, setSettings] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
     const [resetClass, setResetClass] = useState('');
     const [questions, setQuestions] = useState([]);
     const [questionForm, setQuestionForm] = useState(emptyQuestionForm);
@@ -1797,6 +1824,7 @@ function AdminImport() {
     const loadAttempts = () => api.get('/api/admin/attempts').then((data) => setAttempts(data.attempts.data));
     const loadExams = () => api.get('/api/admin/exams').then((data) => {
         setExams(data.exams || []);
+        setCourses(data.courses || []);
         setClasses(data.classes || []);
         setSelectedExamId((current) => current || String(data.exams?.[0]?.id || ''));
     });
@@ -1834,6 +1862,9 @@ function AdminImport() {
     useEffect(() => {
         if (!selectedExam) return;
         setSettings({
+            course_id: selectedExam.course_id || '',
+            title: selectedExam.title || '',
+            class_name: selectedExam.class_name || '',
             duration_minutes: selectedExam.duration_minutes || 60,
             is_active: Boolean(selectedExam.is_active),
             opens_at: toDatetimeLocal(selectedExam.opens_at),
@@ -1864,12 +1895,39 @@ function AdminImport() {
         await Promise.all([loadExams(), loadQuestions()]);
     };
 
+    const createExam = async (event) => {
+        event.preventDefault();
+        setBusy('exam-create');
+        setMessage('');
+        try {
+            const data = await api.post('/api/admin/exams', {
+                ...examForm,
+                course_id: Number(examForm.course_id),
+                class_name: examForm.class_name || null,
+                duration_minutes: Number(examForm.duration_minutes || 60),
+                opens_at: examForm.opens_at || null,
+                closes_at: examForm.closes_at || null,
+            });
+            setMessage(data.message);
+            setExamForm({ course_id: examForm.course_id, title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
+            await loadExams();
+            setSelectedExamId(String(data.exam.id));
+        } catch (err) {
+            setMessage(err.message);
+        } finally {
+            setBusy('');
+        }
+    };
+
     const saveSettings = async (nextActive = settings.is_active) => {
         if (!selectedExam) return;
         setBusy('settings');
         setMessage('');
         try {
             const data = await api.post(`/api/admin/exams/${selectedExam.id}/settings`, {
+                course_id: Number(settings.course_id),
+                title: settings.title,
+                class_name: settings.class_name || null,
                 duration_minutes: Number(settings.duration_minutes || 60),
                 is_active: nextActive,
                 opens_at: settings.opens_at || null,
@@ -1877,6 +1935,25 @@ function AdminImport() {
             });
             setMessage(`${data.message} Masa ujian tersimpan.`);
             await Promise.all([loadExams(), loadQuestions()]);
+        } catch (err) {
+            setMessage(err.message);
+        } finally {
+            setBusy('');
+        }
+    };
+
+    const deleteExam = async () => {
+        if (!selectedExam) return;
+        if (!confirm(`Hapus ujian ${selectedExam.title}? Soal dan paket ujian ini juga akan dihapus.`)) return;
+
+        setBusy('exam-delete');
+        setMessage('');
+        try {
+            const data = await api.delete(`/api/admin/exams/${selectedExam.id}`);
+            setMessage(data.message);
+            setSelectedExamId('');
+            setQuestions([]);
+            await Promise.all([loadExams(), loadAttempts()]);
         } catch (err) {
             setMessage(err.message);
         } finally {
@@ -2029,13 +2106,40 @@ function AdminImport() {
                                 >
                                     <span>
                                         <strong>{exam.title}</strong>
-                                        <small>{exam.course?.name || '-'} | {exam.questions_count} soal</small>
+                                        <small>{exam.course?.name || '-'} | Kelas {questionClassLabel(exam.class_name)} | {exam.questions_count} soal</small>
                                     </span>
                                     <i className={`status-dot ${status.className}`} />
                                 </button>
                             );
                         })}
                     </div>
+
+                    <form className="import-box" onSubmit={createExam}>
+                        <h3>Buat Ujian</h3>
+                        <div className="field">
+                            <label>Mata Kuliah</label>
+                            <select value={examForm.course_id} onChange={(event) => setExamForm({ ...examForm, course_id: event.target.value })} required>
+                                <option value="">Pilih mata kuliah</option>
+                                {courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}
+                            </select>
+                        </div>
+                        <div className="field">
+                            <label>Target Kelas</label>
+                            <select value={examForm.class_name} onChange={(event) => setExamForm({ ...examForm, class_name: event.target.value })}>
+                                <option value="">Umum / semua kelas</option>
+                                {classes.map((className) => <option key={className} value={className}>{className}</option>)}
+                            </select>
+                        </div>
+                        <div className="field">
+                            <label>Judul Ujian</label>
+                            <input value={examForm.title} onChange={(event) => setExamForm({ ...examForm, title: event.target.value })} placeholder="Quiz Desain Web Kelas A" required />
+                        </div>
+                        <div className="field">
+                            <label>Durasi</label>
+                            <input type="number" min="1" max="300" value={examForm.duration_minutes} onChange={(event) => setExamForm({ ...examForm, duration_minutes: event.target.value })} required />
+                        </div>
+                        <button className="btn primary" disabled={busy === 'exam-create'}><Plus size={17} /> Buat Ujian</button>
+                    </form>
 
                     <form className="import-box" onSubmit={upload}>
                         <h3>Import Soal</h3>
@@ -2055,7 +2159,7 @@ function AdminImport() {
                     <div className="section-head">
                         <div>
                             <h2>{selectedExam?.title || 'Pengaturan Ujian'}</h2>
-                            <p className="muted">{selectedExam?.course?.name || 'Pilih ujian untuk mengatur akses mahasiswa.'}</p>
+                            <p className="muted">{selectedExam ? `${selectedExam.course?.name || '-'} | Kelas ${questionClassLabel(selectedExam.class_name)}` : 'Pilih ujian untuk mengatur akses mahasiswa.'}</p>
                         </div>
                         {selectedExam && <span className={`status-pill ${selectedStatus.className}`}>{selectedStatus.label}</span>}
                     </div>
@@ -2079,6 +2183,23 @@ function AdminImport() {
 
                             <div className="settings-grid">
                                 <div className="field">
+                                    <label>Mata Kuliah</label>
+                                    <select value={settings.course_id} onChange={(event) => setSettings({ ...settings, course_id: event.target.value })}>
+                                        {courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="field">
+                                    <label>Judul Ujian</label>
+                                    <input value={settings.title} onChange={(event) => setSettings({ ...settings, title: event.target.value })} />
+                                </div>
+                                <div className="field">
+                                    <label>Target Kelas</label>
+                                    <select value={settings.class_name} onChange={(event) => setSettings({ ...settings, class_name: event.target.value })}>
+                                        <option value="">Umum / semua kelas</option>
+                                        {classes.map((className) => <option key={className} value={className}>{className}</option>)}
+                                    </select>
+                                </div>
+                                <div className="field">
                                     <label>Durasi</label>
                                     <input type="number" min="1" max="300" value={settings.duration_minutes} onChange={(event) => setSettings({ ...settings, duration_minutes: event.target.value })} />
                                 </div>
@@ -2096,6 +2217,7 @@ function AdminImport() {
                                 <button className="btn primary" disabled={busy === 'settings'} onClick={() => saveSettings(true)}><Power size={17} /> Buka Ujian</button>
                                 <button className="btn secondary" disabled={busy === 'settings'} onClick={() => saveSettings(false)}><Power size={17} /> Tutup</button>
                                 <button className="btn secondary" disabled={busy === 'settings'} onClick={() => saveSettings(settings.is_active)}><CalendarClock size={17} /> Simpan Masa</button>
+                                <button className="btn danger" disabled={busy === 'exam-delete'} onClick={deleteExam}><Trash2 size={17} /> Hapus Ujian</button>
                             </div>
 
                             <div className="reset-box">

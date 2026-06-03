@@ -120,18 +120,31 @@ class AdminController extends Controller
                 ->get()
                 ->map(fn (Exam $exam) => $this->examPayload($exam))
                 ->values(),
+            'courses' => Course::where('is_active', true)->orderBy('name')->get(['id', 'name', 'slug']),
             'classes' => $this->classOptions(),
         ]);
     }
 
+    public function storeExam(Request $request)
+    {
+        $data = $this->examData($request);
+
+        $exam = DB::transaction(function () use ($data) {
+            $exam = Exam::create($data);
+            ExamPackage::ensureDefaultPackagesForExam($exam);
+
+            return $exam;
+        });
+
+        return response()->json([
+            'message' => 'Ujian berhasil dibuat.',
+            'exam' => $this->examPayload($exam->fresh(['course'])->loadCount(['questions', 'attempts'])),
+        ], 201);
+    }
+
     public function updateExamSettings(Request $request, Exam $exam)
     {
-        $data = $request->validate([
-            'duration_minutes' => ['required', 'integer', 'min:1', 'max:300'],
-            'is_active' => ['required', 'boolean'],
-            'opens_at' => ['nullable', 'date'],
-            'closes_at' => ['nullable', 'date', 'after_or_equal:opens_at'],
-        ]);
+        $data = $this->examData($request, $exam);
 
         $exam->update($data);
 
@@ -139,6 +152,23 @@ class AdminController extends Controller
             'message' => $exam->is_active ? 'Ujian dibuka.' : 'Ujian ditutup.',
             'exam' => $this->examPayload($exam->fresh(['course'])->loadCount(['questions', 'attempts'])),
         ]);
+    }
+
+    public function destroyExam(Exam $exam)
+    {
+        if ($exam->attempts()->exists()) {
+            return response()->json([
+                'message' => 'Ujian sudah memiliki attempt mahasiswa. Reset attempt terlebih dahulu sebelum menghapus ujian ini.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($exam) {
+            $exam->packages()->delete();
+            $exam->questions()->delete();
+            $exam->delete();
+        });
+
+        return response()->json(['message' => 'Ujian berhasil dihapus.']);
     }
 
     public function resetExamAttempts(Request $request, Exam $exam)
@@ -595,6 +625,35 @@ class AdminController extends Controller
         return $this->normalizedQuestionData($data);
     }
 
+    private function examData(Request $request, ?Exam $exam = null): array
+    {
+        $courseRule = $exam ? ['sometimes', 'integer', 'exists:courses,id'] : ['required', 'integer', 'exists:courses,id'];
+        $titleRule = [
+            $exam ? 'sometimes' : 'required',
+            'string',
+            'max:255',
+            Rule::unique('exams', 'title')
+                ->where('course_id', $request->integer('course_id') ?: $exam?->course_id)
+                ->where('class_name', $this->normalizeClassName($request->input('class_name', $exam?->class_name)))
+                ->ignore($exam?->id),
+        ];
+        $data = $request->validate([
+            'course_id' => $courseRule,
+            'title' => $titleRule,
+            'class_name' => ['nullable', 'string', 'max:100'],
+            'duration_minutes' => ['required', 'integer', 'min:1', 'max:300'],
+            'is_active' => ['required', 'boolean'],
+            'opens_at' => ['nullable', 'date'],
+            'closes_at' => ['nullable', 'date', 'after_or_equal:opens_at'],
+        ]);
+
+        $data['course_id'] = $data['course_id'] ?? $exam?->course_id;
+        $data['title'] = $data['title'] ?? $exam?->title;
+        $data['class_name'] = $this->normalizeClassName($data['class_name'] ?? $exam?->class_name);
+
+        return $data;
+    }
+
     private function questionPayload(Question $question): array
     {
         return [
@@ -706,6 +765,7 @@ class AdminController extends Controller
         return [
             'id' => $exam->id,
             'course_id' => $exam->course_id,
+            'class_name' => $exam->class_name,
             'course' => $exam->course,
             'title' => $exam->title,
             'duration_minutes' => $exam->duration_minutes,

@@ -100,6 +100,10 @@ textarea {
     width: min(1360px, calc(100% - 32px));
 }
 
+.attempt-container {
+    width: min(1440px, calc(100% - 32px));
+}
+
 .panel,
 .card {
     background: #ffffff;
@@ -142,6 +146,33 @@ textarea {
 
 .course-card small {
     color: #65738a;
+}
+
+.exam-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+}
+
+.exam-choice-card {
+    display: grid;
+    align-content: start;
+    gap: 14px;
+    min-height: 260px;
+    padding: 18px;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+.exam-choice-card h2 {
+    margin: 0 0 6px;
+    font-size: 21px;
+}
+
+.exam-choice-stats {
+    display: grid;
+    gap: 2px;
 }
 
 .panel {
@@ -746,8 +777,27 @@ textarea {
 
 .exam-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 280px;
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(220px, 260px);
     gap: 18px;
+    align-items: start;
+}
+
+.exam-layout > .panel {
+    padding: 18px;
+}
+
+.attempt-side {
+    position: sticky;
+    top: 18px;
+}
+
+.attempt-camera-panel {
+    display: grid;
+    gap: 12px;
+}
+
+.attempt-nav-panel h3 {
+    margin: 0 0 12px;
 }
 
 .question-text {
@@ -1184,6 +1234,10 @@ th.sortable:hover {
     .question-editor-grid,
     .question-workspace {
         grid-template-columns: 1fr;
+    }
+
+    .attempt-side {
+        position: static;
     }
 
     .topbar {

@@ -21,6 +21,9 @@ class ExamController extends Controller
         $query = Exam::with('course:id,name,slug')
             ->withCount(['questions' => fn ($questions) => $this->scopeQuestionsForClass($questions, $className)])
             ->where('is_active', true)
+            ->where(fn ($exams) => $exams
+                ->whereNull('class_name')
+                ->when($className, fn ($exams) => $exams->orWhere('class_name', $className)))
             ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
             ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()));
 
@@ -37,28 +40,40 @@ class ExamController extends Controller
             $query->whereHas('course', fn ($course) => $course->where('slug', $request->string('course_slug')->toString()));
         }
 
-        $exam = $query->orderByDesc('questions_count')->latest('id')->first();
+        if ($request->filled('exam_id')) {
+            $query->where('id', $request->integer('exam_id'));
+        }
 
-        if (! $exam) {
+        $exams = $query->orderBy('title')->get();
+
+        if ($exams->isEmpty()) {
             return response()->json(['message' => 'Belum ada ujian aktif.'], 404);
         }
 
-        $attempt = Attempt::where('exam_id', $exam->id)
+        $attempts = Attempt::whereIn('exam_id', $exams->pluck('id'))
             ->where('user_id', $request->user()->id)
-            ->first();
+            ->get()
+            ->keyBy('exam_id');
+
+        $examPayload = fn (Exam $exam) => [
+            'id' => $exam->id,
+            'course' => $exam->course,
+            'title' => $exam->title,
+            'duration_minutes' => $exam->duration_minutes,
+            'opens_at' => $exam->opens_at,
+            'closes_at' => $exam->closes_at,
+            'question_count' => $exam->questions_count,
+            'package_count' => $exam->packages()->where('is_active', true)->count(),
+            'attempt' => $attempts->get($exam->id),
+        ];
+
+        $examList = $exams->map($examPayload)->values();
+        $selected = $examList->first();
 
         return response()->json([
-            'exam' => [
-                'id' => $exam->id,
-                'course' => $exam->course,
-                'title' => $exam->title,
-                'duration_minutes' => $exam->duration_minutes,
-                'opens_at' => $exam->opens_at,
-                'closes_at' => $exam->closes_at,
-                'question_count' => $exam->questions_count,
-                'package_count' => $exam->packages()->where('is_active', true)->count(),
-            ],
-            'attempt' => $attempt,
+            'exams' => $examList,
+            'exam' => collect($selected)->except('attempt')->all(),
+            'attempt' => $selected['attempt'] ?? null,
         ]);
     }
 
@@ -68,6 +83,10 @@ class ExamController extends Controller
         $allowed = $this->allowedCourseSlugs($className);
         if ($allowed !== null && ! in_array($exam->loadMissing('course')->course?->slug, $allowed, true)) {
             return response()->json(['message' => 'Ujian ini tidak tersedia untuk kelas Anda.'], 403);
+        }
+
+        if ($exam->class_name && $exam->class_name !== $className) {
+            return response()->json(['message' => 'Ujian ini khusus untuk kelas lain.'], 403);
         }
 
         if (! $exam->is_active) {
@@ -140,6 +159,9 @@ class ExamController extends Controller
         return response()->json([
             'courses' => Course::withCount(['exams' => fn ($query) => $query
                 ->where('is_active', true)
+                ->where(fn ($exams) => $exams
+                    ->whereNull('class_name')
+                    ->when($request->user()->class_name, fn ($exams, $className) => $exams->orWhere('class_name', $className)))
                 ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
                 ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()))])
                 ->where('is_active', true)

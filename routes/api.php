@@ -34,7 +34,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/exams/{exam}/packages', [AdminController::class, 'packages']);
         Route::post('/admin/exams/{exam}/packages', [AdminController::class, 'storePackage']);
         Route::get('/admin/exams', [AdminController::class, 'exams']);
+        Route::post('/admin/exams', [AdminController::class, 'storeExam']);
         Route::post('/admin/exams/{exam}/settings', [AdminController::class, 'updateExamSettings']);
+        Route::delete('/admin/exams/{exam}', [AdminController::class, 'destroyExam']);
         Route::post('/admin/exams/{exam}/reset-attempts', [AdminController::class, 'resetExamAttempts']);
         Route::get('/admin/exams/{exam}/questions', [AdminController::class, 'questions']);
         Route::post('/admin/exams/{exam}/questions', [AdminController::class, 'storeQuestion']);

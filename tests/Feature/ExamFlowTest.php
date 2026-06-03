@@ -228,6 +228,72 @@ class ExamFlowTest extends TestCase
         $this->assertNotContains($classAQuestion->id, $attemptBQuestionIds);
     }
 
+    public function test_student_can_choose_more_than_one_active_exam_in_a_course(): void
+    {
+        $student = User::create([
+            'nrp' => '2026000201',
+            'name' => 'Student A',
+            'password' => Hash::make('2026000201'),
+            'role' => 'student',
+            'class_name' => '2 MMB A',
+        ]);
+
+        $course = Course::create([
+            'name' => 'Desain Web',
+            'slug' => 'desain-web',
+            'is_active' => true,
+        ]);
+
+        $quiz = Exam::create([
+            'course_id' => $course->id,
+            'title' => 'Quiz Desain Web',
+            'duration_minutes' => 20,
+            'is_active' => true,
+        ]);
+
+        $uts = Exam::create([
+            'course_id' => $course->id,
+            'title' => 'UTS Desain Web',
+            'duration_minutes' => 60,
+            'is_active' => true,
+        ]);
+
+        foreach ([$quiz, $uts] as $exam) {
+            Question::create([
+                'exam_id' => $exam->id,
+                'week' => 1,
+                'question_text' => "Soal {$exam->title}",
+                'option_a' => 'A',
+                'option_b' => 'B',
+                'option_c' => 'C',
+                'option_d' => 'D',
+                'correct_option' => 'a',
+            ]);
+            ExamPackage::ensureDefaultPackagesForExam($exam);
+        }
+
+        $payload = $this->actingAs($student)->getJson('/api/exams/active?course_slug=desain-web')
+            ->assertOk()
+            ->assertJsonCount(2, 'exams')
+            ->json();
+
+        $this->assertSame(['Quiz Desain Web', 'UTS Desain Web'], collect($payload['exams'])->pluck('title')->all());
+
+        $quizAttemptId = $this->actingAs($student)->postJson("/api/exams/{$quiz->id}/start")
+            ->assertCreated()
+            ->json('attempt.id');
+
+        $payloadAfterStart = $this->actingAs($student)->getJson('/api/exams/active?course_slug=desain-web')
+            ->assertOk()
+            ->json();
+
+        $quizPayload = collect($payloadAfterStart['exams'])->firstWhere('id', $quiz->id);
+        $utsPayload = collect($payloadAfterStart['exams'])->firstWhere('id', $uts->id);
+
+        $this->assertSame($quizAttemptId, $quizPayload['attempt']['id']);
+        $this->assertNull($utsPayload['attempt']);
+    }
+
     public function test_admin_can_import_questions_from_json(): void
     {
         $admin = User::create([
@@ -470,6 +536,19 @@ class ExamFlowTest extends TestCase
             'is_active' => true,
         ]);
 
+        $classAExam = $this->actingAs($admin)->postJson('/api/admin/exams', [
+            'course_id' => $webCourse['id'],
+            'title' => 'Quiz Desain Web Kelas A',
+            'class_name' => '2 MMB A',
+            'duration_minutes' => 30,
+            'is_active' => true,
+            'opens_at' => null,
+            'closes_at' => null,
+        ])->assertCreated()
+            ->assertJsonPath('exam.title', 'Quiz Desain Web Kelas A')
+            ->assertJsonPath('exam.class_name', '2 MMB A')
+            ->json('exam');
+
         $this->actingAs($admin)->getJson('/api/admin/courses')
             ->assertOk()
             ->assertJsonPath('courses.0.name', 'Animasi 3D')
@@ -487,25 +566,44 @@ class ExamFlowTest extends TestCase
             ->assertJsonPath('grade_scales.0.letter_grade', 'A')
             ->assertJsonPath('grade_scales.8.letter_grade', 'E');
 
-        $this->actingAs($student)->getJson('/api/exams/active?course_slug=desain-web')
+        $activeWebPayload = $this->actingAs($student)->getJson('/api/exams/active?course_slug=desain-web')
             ->assertOk()
-            ->assertJsonPath('exam.title', 'UTS Desain Web')
-            ->assertJsonPath('exam.course.slug', 'desain-web');
+            ->assertJsonPath('exam.course.slug', 'desain-web')
+            ->json();
+        $this->assertContains('UTS Desain Web', collect($activeWebPayload['exams'])->pluck('title')->all());
 
         $studentACourses = $this->actingAs($student)->getJson('/api/courses')
             ->assertOk()
             ->json('courses');
         $this->assertSame(['animasi-3d', 'desain-web'], collect($studentACourses)->pluck('slug')->all());
 
+        $studentAWebExams = $this->actingAs($student)->getJson('/api/exams/active?course_slug=desain-web')
+            ->assertOk()
+            ->json('exams');
+        $this->assertContains('Quiz Desain Web Kelas A', collect($studentAWebExams)->pluck('title')->all());
+
         $studentBCourses = $this->actingAs($studentB)->getJson('/api/courses')
             ->assertOk()
             ->json('courses');
         $this->assertSame(['animasi-3d', 'desain-web'], collect($studentBCourses)->pluck('slug')->all());
 
+        $studentBWebExams = $this->actingAs($studentB)->getJson('/api/exams/active?course_slug=desain-web')
+            ->assertOk()
+            ->json('exams');
+        $this->assertNotContains('Quiz Desain Web Kelas A', collect($studentBWebExams)->pluck('title')->all());
+        $this->actingAs($studentB)->postJson("/api/exams/{$classAExam['id']}/start")
+            ->assertForbidden()
+            ->assertJsonPath('message', 'Ujian ini khusus untuk kelas lain.');
+
         $studentThreeBCourses = $this->actingAs($studentThreeB)->getJson('/api/courses')
             ->assertOk()
             ->json('courses');
         $this->assertSame(['k3l'], collect($studentThreeBCourses)->pluck('slug')->all());
+
+        $this->actingAs($admin)->deleteJson("/api/admin/exams/{$classAExam['id']}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Ujian berhasil dihapus.');
+        $this->assertDatabaseMissing('exams', ['id' => $classAExam['id']]);
     }
 
     public function test_admin_can_read_master_data_summary(): void
