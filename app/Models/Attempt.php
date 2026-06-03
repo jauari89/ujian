@@ -21,6 +21,9 @@ class Attempt extends Model
         'numeric_grade',
         'grade_category',
         'total_questions',
+        'proctor_warnings',
+        'proctor_violation',
+        'proctor_events',
     ];
 
     protected function casts(): array
@@ -34,6 +37,9 @@ class Attempt extends Model
             'numeric_grade' => 'float',
             'shuffle_pattern' => 'integer',
             'total_questions' => 'integer',
+            'proctor_warnings' => 'integer',
+            'proctor_violation' => 'boolean',
+            'proctor_events' => 'array',
         ];
     }
 

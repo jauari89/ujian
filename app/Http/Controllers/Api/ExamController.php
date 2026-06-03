@@ -17,13 +17,14 @@ class ExamController extends Controller
 
     public function active(Request $request)
     {
+        $className = $request->user()->class_name;
         $query = Exam::with('course:id,name,slug')
-            ->withCount('questions')
+            ->withCount(['questions' => fn ($questions) => $this->scopeQuestionsForClass($questions, $className)])
             ->where('is_active', true)
             ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
             ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()));
 
-        $allowed = $this->allowedCourseSlugs($request->user()->class_name);
+        $allowed = $this->allowedCourseSlugs($className);
         if ($allowed !== null) {
             $query->whereHas('course', fn ($course) => $course->whereIn('slug', $allowed));
         }
@@ -63,7 +64,8 @@ class ExamController extends Controller
 
     public function start(Request $request, Exam $exam)
     {
-        $allowed = $this->allowedCourseSlugs($request->user()->class_name);
+        $className = $request->user()->class_name;
+        $allowed = $this->allowedCourseSlugs($className);
         if ($allowed !== null && ! in_array($exam->loadMissing('course')->course?->slug, $allowed, true)) {
             return response()->json(['message' => 'Ujian ini tidak tersedia untuk kelas Anda.'], 403);
         }
@@ -82,8 +84,8 @@ class ExamController extends Controller
 
         $package = $this->packageForStudent($exam, $request->user()->id);
         $questions = $package
-            ? $package->questions()->get(['questions.id', 'questions.question_type'])
-            : $exam->questions()->orderBy('id')->get(['id', 'question_type']);
+            ? $this->scopeQuestionsForClass($package->questions(), $className)->get(['questions.id', 'questions.question_type'])
+            : $this->scopeQuestionsForClass($exam->questions(), $className)->orderBy('id')->get(['id', 'question_type']);
 
         if ($questions->isEmpty()) {
             return response()->json(['message' => 'Soal belum diimport.'], 422);
@@ -158,6 +160,13 @@ class ExamController extends Controller
         }
 
         return config('class_courses')[$className] ?? null;
+    }
+
+    private function scopeQuestionsForClass($query, ?string $className)
+    {
+        return $query->where(fn ($questions) => $questions
+            ->whereNull('questions.class_name')
+            ->when($className, fn ($questions) => $questions->orWhere('questions.class_name', $className)));
     }
 
     private function packageForStudent(Exam $exam, int $userId): ?ExamPackage

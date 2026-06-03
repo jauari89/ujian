@@ -1,9 +1,10 @@
 import './bootstrap';
 import '../css/app.css';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BarChart3, BookOpen, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarClock, Camera, CameraOff, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 
 const api = {
     csrfReady: false,
@@ -53,6 +54,12 @@ const api = {
         return this.request(path, { method: 'DELETE' });
     },
 };
+
+const PROCTOR_ABSENCE_LIMIT_SECONDS = 10;
+const PROCTOR_WARNING_LIMIT = 5;
+const PROCTOR_DETECTION_INTERVAL_MS = 2000;
+const MEDIAPIPE_WASM_PATH = '/vendor/mediapipe/wasm';
+const MEDIAPIPE_FACE_MODEL_PATH = '/vendor/mediapipe/models/blaze_face_short_range.tflite';
 
 function App() {
     const [user, setUser] = useState(null);
@@ -419,14 +426,6 @@ function CourseSelect({ user }) {
             .catch((err) => setError(err.message));
     }, []);
 
-    const allowedForClassTwo = ['desain-web', 'animasi-3d'];
-    const allowedForClassThree = ['k3l'];
-    const visibleCourses = user?.class_name?.startsWith('2')
-        ? courses.filter((course) => allowedForClassTwo.includes(course.slug))
-        : user?.class_name?.startsWith('3')
-            ? courses.filter((course) => allowedForClassThree.includes(course.slug))
-        : courses;
-
     return (
         <div className="grid">
             <section className="panel">
@@ -435,9 +434,9 @@ function CourseSelect({ user }) {
                     {user?.class_name ? `Kelas ${user.class_name}` : 'Pilih ujian yang akan dikerjakan.'}
                 </p>
                 {error && <div className="alert error">{error}</div>}
-                {!error && visibleCourses.length === 0 && <div className="alert">Belum ada mata kuliah aktif untuk kelas ini.</div>}
+                {!error && courses.length === 0 && <div className="alert">Belum ada mata kuliah aktif untuk kelas ini.</div>}
                 <div className="course-grid">
-                    {visibleCourses.map((course) => (
+                    {courses.map((course) => (
                         <button
                             key={course.id}
                             className="course-card"
@@ -517,18 +516,142 @@ function ExamHome() {
 function AttemptPage() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const videoRef = useRef(null);
+    const streamRef = useRef(null);
+    const personDetectorRef = useRef(null);
+    const personDetectorPromiseRef = useRef(null);
+    const absenceStartedAtRef = useRef(null);
+    const warningSlotRef = useRef(0);
+    const warningCountRef = useRef(0);
+    const violationRef = useRef(false);
     const [attempt, setAttempt] = useState(null);
     const [current, setCurrent] = useState(0);
     const [saving, setSaving] = useState('');
     const [error, setError] = useState('');
     const [now, setNow] = useState(Date.now());
     const [submitting, setSubmitting] = useState(false);
+    const [cameraStatus, setCameraStatus] = useState({ state: 'checking', message: 'Memeriksa kamera...' });
+    const [cameraBusy, setCameraBusy] = useState(false);
+    const [proctorState, setProctorState] = useState({
+        supported: false,
+        personPresent: null,
+        absenceSeconds: 0,
+        warningCount: 0,
+        violation: false,
+        message: 'Rule person menunggu kamera aktif.',
+    });
+
+    const stopCamera = () => {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        if (videoRef.current) videoRef.current.srcObject = null;
+    };
+
+    const setCameraOff = (message) => {
+        setCameraStatus({ state: 'off', message });
+        absenceStartedAtRef.current = null;
+        warningSlotRef.current = 0;
+        setProctorState((current) => ({
+            ...current,
+            personPresent: null,
+            absenceSeconds: 0,
+            message: 'Rule person berhenti sampai kamera aktif lagi.',
+        }));
+    };
+
+    const recordProctorEvent = async (type, absenceSeconds, warningCount, message) => {
+        try {
+            const data = await api.post(`/api/attempts/${id}/proctor-event`, {
+                type,
+                absence_seconds: absenceSeconds,
+                warning_count: warningCount,
+                message,
+            });
+            setAttempt((currentAttempt) => currentAttempt
+                ? {
+                    ...currentAttempt,
+                    proctor_warnings: data.attempt?.proctor_warnings ?? warningCount,
+                    proctor_violation: data.attempt?.proctor_violation ?? type === 'camera_absence_violation',
+                    proctor_events: data.attempt?.proctor_events ?? currentAttempt.proctor_events,
+                }
+                : currentAttempt
+            );
+        } catch {
+            // Proctoring UI tetap berjalan walau sinkronisasi event sesaat gagal.
+        }
+    };
+
+    const startCamera = async () => {
+        if (!navigator.mediaDevices?.getUserMedia) {
+            setCameraStatus({ state: 'unsupported', message: 'Browser ini belum mendukung akses kamera.' });
+            return;
+        }
+
+        setCameraBusy(true);
+        setCameraStatus({ state: 'checking', message: 'Meminta akses kamera...' });
+
+        try {
+            stopCamera();
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+            const [track] = stream.getVideoTracks();
+
+            if (!track) {
+                stream.getTracks().forEach((item) => item.stop());
+                setCameraStatus({ state: 'missing', message: 'Kamera tidak ditemukan di perangkat ini.' });
+                return;
+            }
+
+            track.onended = () => setCameraOff('Kamera berhenti. Nyalakan lagi untuk melanjutkan ujian.');
+            track.onmute = () => setCameraOff('Kamera tidak aktif. Periksa perangkat lalu nyalakan lagi.');
+            track.onunmute = () => setCameraStatus({ state: 'ready', message: 'Kamera aktif.' });
+
+            streamRef.current = stream;
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                videoRef.current.play?.().catch(() => {});
+            }
+            setCameraStatus({ state: 'ready', message: 'Kamera aktif.' });
+        } catch (err) {
+            if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+                setCameraStatus({ state: 'blocked', message: 'Akses kamera ditolak. Izinkan kamera di browser untuk mengerjakan ujian.' });
+            } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                setCameraStatus({ state: 'missing', message: 'Kamera tidak ditemukan di perangkat ini.' });
+            } else {
+                setCameraStatus({ state: 'off', message: 'Kamera belum bisa dinyalakan. Periksa kamera lalu coba lagi.' });
+            }
+        } finally {
+            setCameraBusy(false);
+        }
+    };
 
     useEffect(() => {
         api.get(`/api/attempts/${id}`).then((data) => setAttempt(data.attempt)).catch((err) => setError(err.message));
         const interval = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(interval);
     }, [id]);
+
+    useEffect(() => {
+        startCamera();
+        return () => stopCamera();
+    }, [id]);
+
+    useEffect(() => {
+        if (videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) {
+            videoRef.current.srcObject = streamRef.current;
+            videoRef.current.play?.().catch(() => {});
+        }
+    }, [attempt, cameraStatus.state]);
+
+    useEffect(() => {
+        if (!attempt) return;
+        warningCountRef.current = Math.max(warningCountRef.current, Number(attempt.proctor_warnings || 0));
+        violationRef.current = violationRef.current || Boolean(attempt.proctor_violation);
+        setProctorState((current) => ({
+            ...current,
+            warningCount: warningCountRef.current,
+            violation: violationRef.current,
+        }));
+    }, [attempt?.id, attempt?.proctor_warnings, attempt?.proctor_violation]);
 
     const answers = attempt?.answers || [];
     const active = answers[current];
@@ -543,6 +666,139 @@ function AttemptPage() {
     const firstMultipleChoiceIndex = answers.findIndex((answer) => answer.question?.question_type !== 'true_false');
     const remaining = useMemo(() => attempt ? Math.max(0, new Date(attempt.ends_at).getTime() - now) : 0, [attempt, now]);
     const warning = remaining <= 5 * 60 * 1000;
+    const cameraReady = cameraStatus.state === 'ready';
+    const cameraRequired = attempt?.status === 'in_progress';
+    const cameraLocked = cameraRequired && !cameraReady;
+    const cameraLabel = cameraReady ? 'Aktif' : cameraStatus.state === 'checking' ? 'Cek' : 'Wajib';
+
+    const ensureCameraReady = () => {
+        if (!cameraLocked) return true;
+        setCameraStatus((currentStatus) => ({
+            ...currentStatus,
+            message: currentStatus.message || 'Kamera wajib aktif untuk mengerjakan ujian.',
+        }));
+        return false;
+    };
+
+    useEffect(() => {
+        if (!cameraReady || attempt?.status !== 'in_progress') {
+            absenceStartedAtRef.current = null;
+            warningSlotRef.current = 0;
+            setProctorState((current) => ({
+                ...current,
+                personPresent: null,
+                absenceSeconds: 0,
+                message: cameraReady ? 'Rule person berhenti karena attempt tidak berjalan.' : 'Rule person menunggu kamera aktif.',
+            }));
+            return undefined;
+        }
+
+        let cancelled = false;
+        let detectorInterval = null;
+
+        const updatePersonState = (personPresent) => {
+            if (cancelled) return;
+
+            if (personPresent) {
+                absenceStartedAtRef.current = null;
+                warningSlotRef.current = 0;
+                setProctorState((current) => ({
+                    ...current,
+                    supported: true,
+                    personPresent: true,
+                    absenceSeconds: 0,
+                    message: violationRef.current
+                        ? 'Person terdeteksi, tetapi attempt sudah memiliki indikasi pelanggaran.'
+                        : 'Person terdeteksi.',
+                }));
+                return;
+            }
+
+            const startedAt = absenceStartedAtRef.current || Date.now();
+            absenceStartedAtRef.current = startedAt;
+            const absenceSeconds = Math.floor((Date.now() - startedAt) / 1000);
+            const warningSlot = Math.floor(absenceSeconds / PROCTOR_ABSENCE_LIMIT_SECONDS);
+            let message = `Person tidak terdeteksi ${absenceSeconds}/${PROCTOR_ABSENCE_LIMIT_SECONDS} detik.`;
+
+            if (warningSlot >= 1 && warningSlot !== warningSlotRef.current) {
+                warningSlotRef.current = warningSlot;
+                warningCountRef.current += 1;
+
+                if (warningCountRef.current > PROCTOR_WARNING_LIMIT) {
+                    violationRef.current = true;
+                    message = 'Indikasi pelanggaran: person tidak terdeteksi lebih dari 5 peringatan.';
+                    recordProctorEvent('camera_absence_violation', absenceSeconds, warningCountRef.current, message);
+                } else {
+                    message = `Peringatan ${warningCountRef.current}/${PROCTOR_WARNING_LIMIT}: mendekat ke kamera/sistem.`;
+                    recordProctorEvent('camera_absence_warning', absenceSeconds, warningCountRef.current, message);
+                }
+            }
+
+            setProctorState((current) => ({
+                ...current,
+                supported: true,
+                personPresent: false,
+                absenceSeconds,
+                warningCount: warningCountRef.current,
+                violation: violationRef.current,
+                message,
+            }));
+        };
+
+        const loadPersonDetector = async () => {
+            if (personDetectorRef.current) return personDetectorRef.current;
+
+            if (!personDetectorPromiseRef.current) {
+                setProctorState((current) => ({
+                    ...current,
+                    supported: false,
+                    personPresent: null,
+                    absenceSeconds: 0,
+                    message: 'Memuat MediaPipe Face Detection...',
+                }));
+
+                personDetectorPromiseRef.current = FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
+                    .then((vision) => FaceDetector.createFromOptions(vision, {
+                        baseOptions: {
+                            modelAssetPath: MEDIAPIPE_FACE_MODEL_PATH,
+                        },
+                        runningMode: 'VIDEO',
+                        minDetectionConfidence: 0.5,
+                    }));
+            }
+
+            personDetectorRef.current = await personDetectorPromiseRef.current;
+            return personDetectorRef.current;
+        };
+
+        const detectPerson = async () => {
+            const video = videoRef.current;
+            if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+
+            try {
+                const detector = await loadPersonDetector();
+                const result = detector.detectForVideo(video, performance.now());
+                updatePersonState((result?.detections || []).length > 0);
+            } catch {
+                personDetectorPromiseRef.current = null;
+                setProctorState((current) => ({
+                    ...current,
+                    supported: false,
+                    personPresent: null,
+                    absenceSeconds: 0,
+                    message: 'MediaPipe Face Detection belum bisa dimuat. Kamera tetap wajib aktif.',
+                }));
+            }
+        };
+
+        detectPerson();
+        detectorInterval = setInterval(detectPerson, PROCTOR_DETECTION_INTERVAL_MS);
+
+        return () => {
+            cancelled = true;
+            if (detectorInterval) clearInterval(detectorInterval);
+        };
+    }, [cameraReady, attempt?.status, id]);
 
     useEffect(() => {
         if (attempt && remaining === 0 && attempt.status === 'in_progress') {
@@ -565,6 +821,7 @@ function AttemptPage() {
 
     const choose = async (option) => {
         if (!active || attempt.status !== 'in_progress') return;
+        if (!ensureCameraReady()) return;
         setAnswerState(active.id, { selected_option: option, selected_options: null });
         setSaving('Menyimpan...');
         try {
@@ -584,6 +841,7 @@ function AttemptPage() {
 
     const chooseTrueFalse = async (key, value) => {
         if (!active || attempt.status !== 'in_progress') return;
+        if (!ensureCameraReady()) return;
         const selectedOptions = { ...(active.selected_options || {}), [key]: value };
         setAnswerState(active.id, { selected_option: null, selected_options: selectedOptions });
         setSaving('Menyimpan...');
@@ -596,6 +854,7 @@ function AttemptPage() {
     };
 
     const submit = async (auto = false) => {
+        if (!auto && !ensureCameraReady()) return;
         const unanswered = answers.filter((answer) => !answerIsFilled(answer)).length;
         const message = unanswered > 0
             ? `Masih ada ${unanswered} soal belum lengkap. Submit ujian sekarang?`
@@ -618,6 +877,14 @@ function AttemptPage() {
     const mm = String(Math.floor(remaining / 60000)).padStart(2, '0');
     const ss = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
     const currentNumber = phaseIndex >= 0 ? phaseIndex + 1 : current + 1;
+    const proctorCountdown = proctorState.personPresent === false
+        ? Math.max(0, PROCTOR_ABSENCE_LIMIT_SECONDS - (proctorState.absenceSeconds % PROCTOR_ABSENCE_LIMIT_SECONDS || PROCTOR_ABSENCE_LIMIT_SECONDS))
+        : PROCTOR_ABSENCE_LIMIT_SECONDS;
+    const proctorPersonLabel = !cameraReady
+        ? 'Menunggu kamera'
+        : proctorState.supported
+            ? (proctorState.personPresent === false ? 'Tidak terdeteksi' : 'Terdeteksi')
+            : 'MediaPipe';
     const nextInPhase = () => {
         if (phaseIndex < phaseAnswers.length - 1) {
             setCurrent(answers.findIndex((answer) => answer.id === phaseAnswers[phaseIndex + 1].id));
@@ -648,6 +915,13 @@ function AttemptPage() {
                     </button>
                 </div>
                 {warning && <div className="alert">Waktu kurang dari 5 menit.</div>}
+                {cameraLocked && <div className="alert error">Kamera wajib aktif sebelum menjawab atau submit ujian.</div>}
+                {cameraReady && proctorState.supported && proctorState.personPresent === false && !proctorState.violation && (
+                    <div className="alert">Person tidak terdeteksi. Mendekat ke kamera sebelum peringatan berikutnya ({proctorCountdown} detik).</div>
+                )}
+                {proctorState.violation && (
+                    <div className="alert error">Indikasi pelanggaran: person tidak terdeteksi lebih dari 5 peringatan.</div>
+                )}
                 {error && <div className="alert error">{error}</div>}
                 <p className="question-text">{active.question.question_text}</p>
                 {active.question?.question_type === 'true_false' ? (
@@ -657,15 +931,15 @@ function AttemptPage() {
                                 <span className="option-key">{key}</span>
                                 <span>{active.question[`option_${key}`]}</span>
                                 <div className="tf-toggle">
-                                    <button className={active.selected_options?.[key] === true ? 'selected' : ''} onClick={() => chooseTrueFalse(key, true)}>Benar</button>
-                                    <button className={active.selected_options?.[key] === false ? 'selected' : ''} onClick={() => chooseTrueFalse(key, false)}>Salah</button>
+                                    <button disabled={cameraLocked} className={active.selected_options?.[key] === true ? 'selected' : ''} onClick={() => chooseTrueFalse(key, true)}>Benar</button>
+                                    <button disabled={cameraLocked} className={active.selected_options?.[key] === false ? 'selected' : ''} onClick={() => chooseTrueFalse(key, false)}>Salah</button>
                                 </div>
                             </div>
                         ))}
                     </div>
                 ) : (
                     questionKeys.map((key) => (
-                        <button key={key} className={`option ${active.selected_option === key ? 'selected' : ''}`} onClick={() => choose(key)}>
+                        <button key={key} disabled={cameraLocked} className={`option ${active.selected_option === key ? 'selected' : ''}`} onClick={() => choose(key)}>
                             <span className="option-key">{key}</span>
                             <span>{active.question[`option_${key}`]}</span>
                         </button>
@@ -680,6 +954,34 @@ function AttemptPage() {
                 </div>
             </section>
             <aside className="panel">
+                <div className={`camera-card ${cameraReady ? 'ready' : 'locked'}`}>
+                    <div className="camera-head">
+                        <strong><Camera size={17} /> Kamera Ujian</strong>
+                        <span className={`camera-pill ${cameraReady ? 'ready' : 'locked'}`}>{cameraLabel}</span>
+                    </div>
+                    <div className="camera-preview">
+                        <video ref={videoRef} autoPlay muted playsInline />
+                        {!cameraReady && (
+                            <div className="camera-placeholder">
+                                <CameraOff size={26} />
+                                <span>Kamera belum aktif</span>
+                            </div>
+                        )}
+                    </div>
+                    <p className="muted">{cameraStatus.message}</p>
+                    <div className="proctor-rule-box">
+                        <div className="stat-row"><span>Rule 1 person</span><strong>{proctorPersonLabel}</strong></div>
+                        <div className="stat-row"><span>Counter absen</span><strong>{proctorState.absenceSeconds}/{PROCTOR_ABSENCE_LIMIT_SECONDS}s</strong></div>
+                        <div className="stat-row"><span>Peringatan</span><strong>{proctorState.warningCount}/{PROCTOR_WARNING_LIMIT}</strong></div>
+                        <div className="stat-row"><span>Status</span><strong>{proctorState.violation ? 'Pelanggaran' : 'Aman'}</strong></div>
+                        <p className="muted">{proctorState.message}</p>
+                    </div>
+                    {!cameraReady && (
+                        <button className="btn primary" style={{ width: '100%' }} disabled={cameraBusy} onClick={startCamera}>
+                            {cameraBusy ? 'Menyalakan...' : 'Nyalakan Kamera'}
+                        </button>
+                    )}
+                </div>
                 <div className="stat-row"><span>Paket</span><strong>{attempt.package?.code || '-'}</strong></div>
                 <div className="stat-row"><span>Pola acak</span><strong>{attempt.shuffle_pattern || '-'}/10</strong></div>
                 <h3>Navigasi {questionTypeLabel(active.question?.question_type)}</h3>
@@ -696,7 +998,7 @@ function AttemptPage() {
                 </div>
                 <div className="stat-row"><span>ABCD lengkap</span><strong>{multipleChoiceAnswers.filter(answerIsFilled).length}/{multipleChoiceAnswers.length}</strong></div>
                 <div className="stat-row"><span>T/F lengkap</span><strong>{trueFalseAnswers.filter(answerIsFilled).length}/{trueFalseAnswers.length}</strong></div>
-                <button className="btn danger" style={{ width: '100%', marginTop: 18 }} disabled={submitting} onClick={() => submit(false)}>
+                <button className="btn danger" style={{ width: '100%', marginTop: 18 }} disabled={submitting || cameraLocked} onClick={() => submit(false)}>
                     {submitting ? 'Submit...' : 'Submit'}
                 </button>
             </aside>
@@ -1029,6 +1331,8 @@ function AdminReport() {
         { key: 'score', label: 'Skor', type: 'number', value: (a) => a.score },
         { key: 'percentage', label: 'Nilai', type: 'number', value: (a) => a.percentage },
         { key: 'letter_grade', label: 'Grade', type: 'text', value: (a) => a.letter_grade },
+        { key: 'proctor_warnings', label: 'Warning', type: 'number', value: (a) => a.proctor_warnings },
+        { key: 'proctor_violation', label: 'Proctor', type: 'number', value: (a) => (a.proctor_violation ? 1 : 0) },
     ];
 
     const toggleSort = (key) => {
@@ -1243,9 +1547,11 @@ function AdminReport() {
                                             <td>{attempt.score}/{attempt.total_questions}</td>
                                             <td>{pct(attempt.percentage)}</td>
                                             <td><span className="badge">{attempt.letter_grade || '-'}</span></td>
+                                            <td>{attempt.proctor_warnings || 0}/{PROCTOR_WARNING_LIMIT}</td>
+                                            <td>{attempt.proctor_violation ? <span className="badge badge-warn">Pelanggaran</span> : <span className="badge">Aman</span>}</td>
                                         </tr>
                                     ))}
-                                    {sortedStudentResults.length === 0 && <tr><td colSpan="12">Belum ada attempt sesuai filter.</td></tr>}
+                                    {sortedStudentResults.length === 0 && <tr><td colSpan="14">Belum ada attempt sesuai filter.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
@@ -1412,6 +1718,7 @@ function examStatus(exam) {
 }
 
 const emptyQuestionForm = {
+    class_name: '',
     week: '',
     question_type: 'multiple_choice',
     question_text: '',
@@ -1466,8 +1773,13 @@ function answerDisplay(answer) {
     return answer.selected_option || '-';
 }
 
+function questionClassLabel(className) {
+    return className || 'Umum';
+}
+
 function AdminImport() {
     const [file, setFile] = useState(null);
+    const [importClass, setImportClass] = useState('');
     const [message, setMessage] = useState('');
     const [attempts, setAttempts] = useState([]);
     const [exams, setExams] = useState([]);
@@ -1479,6 +1791,7 @@ function AdminImport() {
     const [questionForm, setQuestionForm] = useState(emptyQuestionForm);
     const [editingQuestionId, setEditingQuestionId] = useState(null);
     const [activeQuestionType, setActiveQuestionType] = useState('multiple_choice');
+    const [questionClassFilter, setQuestionClassFilter] = useState('__all');
     const [busy, setBusy] = useState('');
 
     const loadAttempts = () => api.get('/api/admin/attempts').then((data) => setAttempts(data.attempts.data));
@@ -1500,11 +1813,13 @@ function AdminImport() {
     const totalAttempts = exams.reduce((total, exam) => total + Number(exam.attempts_count || 0), 0);
     const latestAttempts = attempts.slice(0, 12);
     const editingQuestion = questions.find((question) => question.id === editingQuestionId);
+    const activeQuestionClass = questionClassFilter === '__all' ? '' : questionClassFilter;
+    const classFilteredQuestions = questions.filter((question) => questionClassFilter === '__all' || (question.class_name || '') === questionClassFilter);
     const questionCounts = questionTypeOptions.reduce((counts, item) => ({
         ...counts,
-        [item.type]: questions.filter((question) => normalizeQuestionType(question.question_type) === item.type).length,
+        [item.type]: classFilteredQuestions.filter((question) => normalizeQuestionType(question.question_type) === item.type).length,
     }), {});
-    const filteredQuestions = questions.filter((question) => normalizeQuestionType(question.question_type) === activeQuestionType);
+    const filteredQuestions = classFilteredQuestions.filter((question) => normalizeQuestionType(question.question_type) === activeQuestionType);
     const activeQuestionMeta = questionTypeMeta(activeQuestionType);
 
     const loadQuestions = (examId = selectedExamId) => {
@@ -1528,19 +1843,25 @@ function AdminImport() {
 
     useEffect(() => {
         setActiveQuestionType('multiple_choice');
-        setQuestionForm(emptyQuestionForm);
+        setQuestionForm({ ...emptyQuestionForm, class_name: activeQuestionClass });
         setEditingQuestionId(null);
         loadQuestions(selectedExamId);
     }, [selectedExamId]);
+
+    useEffect(() => {
+        if (editingQuestionId) return;
+        setQuestionForm((current) => ({ ...current, class_name: activeQuestionClass }));
+    }, [questionClassFilter, editingQuestionId]);
 
     const upload = async (event) => {
         event.preventDefault();
         if (!file) return;
         const body = new FormData();
         body.append('file', file);
+        if (importClass) body.append('class_name', importClass);
         const data = await api.post('/api/admin/questions/import', body);
-        setMessage(`${data.message} Total soal: ${data.question_count}.`);
-        await loadExams();
+        setMessage(`${data.message} Target: ${questionClassLabel(importClass)}. Total soal: ${data.question_count}.`);
+        await Promise.all([loadExams(), loadQuestions()]);
     };
 
     const saveSettings = async (nextActive = settings.is_active) => {
@@ -1588,6 +1909,7 @@ function AdminImport() {
         setActiveQuestionType(nextType);
         setEditingQuestionId(question.id);
         setQuestionForm({
+            class_name: question.class_name || '',
             week: question.week || '',
             question_type: nextType,
             question_text: question.question_text || '',
@@ -1603,14 +1925,14 @@ function AdminImport() {
 
     const clearQuestionForm = () => {
         setEditingQuestionId(null);
-        setQuestionForm({ ...emptyQuestionForm, question_type: activeQuestionType });
+        setQuestionForm({ ...emptyQuestionForm, class_name: activeQuestionClass, question_type: activeQuestionType });
     };
 
     const switchQuestionType = (type) => {
         const nextType = normalizeQuestionType(type);
         setActiveQuestionType(nextType);
         setEditingQuestionId(null);
-        setQuestionForm({ ...emptyQuestionForm, question_type: nextType });
+        setQuestionForm({ ...emptyQuestionForm, class_name: activeQuestionClass, question_type: nextType });
     };
 
     const saveQuestion = async (event) => {
@@ -1622,6 +1944,7 @@ function AdminImport() {
         try {
             const payload = {
                 ...questionForm,
+                class_name: questionForm.class_name || null,
                 week: questionForm.week ? Number(questionForm.week) : null,
                 correct_option: questionForm.question_type === 'true_false' ? 'a' : questionForm.correct_option,
                 correct_options: questionForm.question_type === 'true_false' ? questionForm.correct_options : null,
@@ -1716,6 +2039,13 @@ function AdminImport() {
 
                     <form className="import-box" onSubmit={upload}>
                         <h3>Import Soal</h3>
+                        <div className="field">
+                            <label>Target Kelas</label>
+                            <select value={importClass} onChange={(event) => setImportClass(event.target.value)}>
+                                <option value="">Umum / semua kelas</option>
+                                {classes.map((className) => <option key={className} value={className}>{className}</option>)}
+                            </select>
+                        </div>
                         <input className="file-input" type="file" accept="application/json,.json" onChange={(e) => setFile(e.target.files[0])} />
                         <button className="btn primary"><FileUp size={17} /> Import JSON</button>
                     </form>
@@ -1802,6 +2132,17 @@ function AdminImport() {
                             <h3>Bank Soal</h3>
                             <button className="btn secondary" onClick={() => loadQuestions()} disabled={!selectedExam}>Refresh</button>
                         </div>
+                        <div className="field">
+                            <label>Kelas Soal</label>
+                            <select value={questionClassFilter} onChange={(event) => {
+                                setQuestionClassFilter(event.target.value);
+                                setEditingQuestionId(null);
+                            }}>
+                                <option value="__all">Semua kelas</option>
+                                <option value="">Umum</option>
+                                {classes.map((className) => <option key={className} value={className}>{className}</option>)}
+                            </select>
+                        </div>
                         <div className="question-type-tabs" aria-label="Filter jenis soal">
                             {questionTypeOptions.map((item) => (
                                 <button
@@ -1828,6 +2169,7 @@ function AdminImport() {
                                             {questionTypeLabel(question.question_type)} | Minggu {question.week || '-'} | {question.question_type === 'true_false'
                                                 ? `Benar: ${questionKeys.filter((key) => question.correct_options?.[key]).map((key) => key.toUpperCase()).join(', ') || '-'}`
                                                 : `Kunci ${String(question.correct_option || '-').toUpperCase()}`}
+                                            {' '}| Kelas {questionClassLabel(question.class_name)}
                                         </small>
                                     </span>
                                 </button>
@@ -1842,6 +2184,7 @@ function AdminImport() {
                         count={questionCounts[activeQuestionType] || 0}
                         editingQuestion={editingQuestion}
                         selectedExam={selectedExam}
+                        classes={classes}
                         questionForm={questionForm}
                         setQuestionForm={setQuestionForm}
                         busy={busy}
@@ -1890,6 +2233,7 @@ function QuestionEditorCard({
     count,
     editingQuestion,
     selectedExam,
+    classes,
     questionForm,
     setQuestionForm,
     busy,
@@ -1920,6 +2264,13 @@ function QuestionEditorCard({
                 <div className="field">
                     <label>Jenis Soal</label>
                     <input value={meta.label} readOnly />
+                </div>
+                <div className="field">
+                    <label>Target Kelas</label>
+                    <select value={questionForm.class_name} onChange={(event) => setQuestionForm({ ...questionForm, class_name: event.target.value, question_type: type })}>
+                        <option value="">Umum / semua kelas</option>
+                        {classes.map((className) => <option key={className} value={className}>{className}</option>)}
+                    </select>
                 </div>
                 <div className="field">
                     <label>Minggu</label>

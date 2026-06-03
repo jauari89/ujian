@@ -92,6 +92,142 @@ class ExamFlowTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_student_proctoring_absence_events_are_recorded(): void
+    {
+        [$student, $exam] = $this->seedExam();
+        $attemptId = $this->actingAs($student)->postJson("/api/exams/{$exam->id}/start")
+            ->assertCreated()
+            ->json('attempt.id');
+
+        $this->actingAs($student)->postJson("/api/attempts/{$attemptId}/proctor-event", [
+            'type' => 'camera_absence_warning',
+            'absence_seconds' => 30,
+            'warning_count' => 1,
+            'message' => 'Peringatan 1/5: mendekat ke kamera/sistem.',
+        ])->assertOk()
+            ->assertJsonPath('attempt.proctor_warnings', 1)
+            ->assertJsonPath('attempt.proctor_violation', false);
+
+        $this->actingAs($student)->postJson("/api/attempts/{$attemptId}/proctor-event", [
+            'type' => 'camera_absence_violation',
+            'absence_seconds' => 180,
+            'warning_count' => 6,
+            'message' => 'Indikasi pelanggaran: person tidak terdeteksi lebih dari 5 peringatan.',
+        ])->assertOk()
+            ->assertJsonPath('attempt.proctor_warnings', 6)
+            ->assertJsonPath('attempt.proctor_violation', true);
+
+        $this->assertDatabaseHas('attempts', [
+            'id' => $attemptId,
+            'proctor_warnings' => 6,
+            'proctor_violation' => true,
+        ]);
+
+        $admin = User::create([
+            'name' => 'Admin',
+            'email' => 'admin-proctor@pens.local',
+            'password' => Hash::make('Admin123!'),
+            'role' => 'admin',
+        ]);
+
+        $this->actingAs($admin)->getJson("/api/admin/reports/results?exam_id={$exam->id}")
+            ->assertOk()
+            ->assertJsonPath('student_results.0.proctor_warnings', 6)
+            ->assertJsonPath('student_results.0.proctor_violation', true);
+    }
+
+    public function test_question_bank_can_be_scoped_per_class(): void
+    {
+        $course = Course::create([
+            'name' => 'Desain Web',
+            'slug' => 'desain-web',
+            'is_active' => true,
+        ]);
+
+        $exam = Exam::create([
+            'course_id' => $course->id,
+            'title' => 'UTS Desain Web',
+            'duration_minutes' => 60,
+            'is_active' => true,
+        ]);
+
+        $commonQuestion = Question::create([
+            'exam_id' => $exam->id,
+            'class_name' => null,
+            'week' => 1,
+            'question_text' => 'Soal umum',
+            'option_a' => 'A',
+            'option_b' => 'B',
+            'option_c' => 'C',
+            'option_d' => 'D',
+            'correct_option' => 'a',
+        ]);
+
+        $classAQuestion = Question::create([
+            'exam_id' => $exam->id,
+            'class_name' => '2 MMB A',
+            'week' => 1,
+            'question_text' => 'Soal kelas A',
+            'option_a' => 'A',
+            'option_b' => 'B',
+            'option_c' => 'C',
+            'option_d' => 'D',
+            'correct_option' => 'a',
+        ]);
+
+        $classBQuestion = Question::create([
+            'exam_id' => $exam->id,
+            'class_name' => '2 MMB B',
+            'week' => 1,
+            'question_text' => 'Soal kelas B',
+            'option_a' => 'A',
+            'option_b' => 'B',
+            'option_c' => 'C',
+            'option_d' => 'D',
+            'correct_option' => 'a',
+        ]);
+
+        ExamPackage::ensureDefaultPackagesForExam($exam);
+
+        $studentA = User::create([
+            'nrp' => '2026000101',
+            'name' => 'Student A',
+            'password' => Hash::make('2026000101'),
+            'role' => 'student',
+            'class_name' => '2 MMB A',
+        ]);
+
+        $studentB = User::create([
+            'nrp' => '2026000102',
+            'name' => 'Student B',
+            'password' => Hash::make('2026000102'),
+            'role' => 'student',
+            'class_name' => '2 MMB B',
+        ]);
+
+        $this->actingAs($studentA)->getJson('/api/exams/active?course_slug=desain-web')
+            ->assertOk()
+            ->assertJsonPath('exam.question_count', 2);
+
+        $attemptAId = $this->actingAs($studentA)->postJson("/api/exams/{$exam->id}/start")
+            ->assertCreated()
+            ->assertJsonPath('attempt.total_questions', 2)
+            ->json('attempt.id');
+        $attemptAQuestionIds = Attempt::with('answers')->findOrFail($attemptAId)->answers->pluck('question_id')->all();
+        $this->assertContains($commonQuestion->id, $attemptAQuestionIds);
+        $this->assertContains($classAQuestion->id, $attemptAQuestionIds);
+        $this->assertNotContains($classBQuestion->id, $attemptAQuestionIds);
+
+        $attemptBId = $this->actingAs($studentB)->postJson("/api/exams/{$exam->id}/start")
+            ->assertCreated()
+            ->assertJsonPath('attempt.total_questions', 2)
+            ->json('attempt.id');
+        $attemptBQuestionIds = Attempt::with('answers')->findOrFail($attemptBId)->answers->pluck('question_id')->all();
+        $this->assertContains($commonQuestion->id, $attemptBQuestionIds);
+        $this->assertContains($classBQuestion->id, $attemptBQuestionIds);
+        $this->assertNotContains($classAQuestion->id, $attemptBQuestionIds);
+    }
+
     public function test_admin_can_import_questions_from_json(): void
     {
         $admin = User::create([
@@ -282,6 +418,23 @@ class ExamFlowTest extends TestCase
             'name' => 'Student',
             'password' => Hash::make('2026000001'),
             'role' => 'student',
+            'class_name' => '2 MMB A',
+        ]);
+
+        $studentB = User::create([
+            'nrp' => '2026000002',
+            'name' => 'Student B',
+            'password' => Hash::make('2026000002'),
+            'role' => 'student',
+            'class_name' => '2 MMB B',
+        ]);
+
+        $studentThreeB = User::create([
+            'nrp' => '2026000003',
+            'name' => 'Student 3B',
+            'password' => Hash::make('2026000003'),
+            'role' => 'student',
+            'class_name' => '3 MMB B',
         ]);
 
         $webCourse = $this->actingAs($admin)->postJson('/api/admin/courses', [
@@ -290,6 +443,10 @@ class ExamFlowTest extends TestCase
 
         $threeDCourse = $this->actingAs($admin)->postJson('/api/admin/courses', [
             'name' => 'Animasi 3D',
+        ])->assertCreated()->json('course');
+
+        $k3lCourse = $this->actingAs($admin)->postJson('/api/admin/courses', [
+            'name' => 'K3L',
         ])->assertCreated()->json('course');
 
         Exam::create([
@@ -306,10 +463,24 @@ class ExamFlowTest extends TestCase
             'is_active' => true,
         ]);
 
+        Exam::create([
+            'course_id' => $k3lCourse['id'],
+            'title' => 'UTS K3L',
+            'duration_minutes' => 60,
+            'is_active' => true,
+        ]);
+
         $this->actingAs($admin)->getJson('/api/admin/courses')
             ->assertOk()
             ->assertJsonPath('courses.0.name', 'Animasi 3D')
             ->assertJsonPath('courses.1.name', 'Desain Web');
+
+        $classes = $this->actingAs($admin)->getJson('/api/admin/exams')
+            ->assertOk()
+            ->json('classes');
+        $this->assertContains('2 MMB A', $classes);
+        $this->assertContains('2 MMB B', $classes);
+        $this->assertContains('3 MMB B', $classes);
 
         $this->actingAs($admin)->getJson("/api/admin/courses/{$webCourse['id']}/grade-scales")
             ->assertOk()
@@ -320,12 +491,27 @@ class ExamFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('exam.title', 'UTS Desain Web')
             ->assertJsonPath('exam.course.slug', 'desain-web');
+
+        $studentACourses = $this->actingAs($student)->getJson('/api/courses')
+            ->assertOk()
+            ->json('courses');
+        $this->assertSame(['animasi-3d', 'desain-web'], collect($studentACourses)->pluck('slug')->all());
+
+        $studentBCourses = $this->actingAs($studentB)->getJson('/api/courses')
+            ->assertOk()
+            ->json('courses');
+        $this->assertSame(['animasi-3d', 'desain-web'], collect($studentBCourses)->pluck('slug')->all());
+
+        $studentThreeBCourses = $this->actingAs($studentThreeB)->getJson('/api/courses')
+            ->assertOk()
+            ->json('courses');
+        $this->assertSame(['k3l'], collect($studentThreeBCourses)->pluck('slug')->all());
     }
 
     public function test_admin_can_read_master_data_summary(): void
     {
         [$student, $exam] = $this->seedExam();
-        $student->update(['class_name' => '2 MMB']);
+        $student->update(['class_name' => '3 MMB A']);
         ExamPackage::ensureDefaultPackagesForExam($exam);
 
         $admin = User::create([
@@ -349,7 +535,7 @@ class ExamFlowTest extends TestCase
             ->assertJsonPath('summary.packages', 3)
             ->assertJsonPath('courses.0.name', 'K3L')
             ->assertJsonPath('exams.0.title', 'UTS K3L')
-            ->assertJsonPath('classes.0.name', '2 MMB')
+            ->assertJsonPath('classes.0.name', '3 MMB A')
             ->assertJsonPath('students.0.nrp', '2026000001');
     }
 
@@ -443,7 +629,7 @@ class ExamFlowTest extends TestCase
     {
         [$students, $exam] = $this->seedPackagedExam();
         foreach ($students as $student) {
-            $student->update(['class_name' => '2 MMB']);
+            $student->update(['class_name' => '3 MMB A']);
         }
 
         $admin = User::create([
@@ -476,7 +662,7 @@ class ExamFlowTest extends TestCase
             ->assertJsonPath('attempt.percentage', 80)
             ->assertJsonPath('attempt.letter_grade', 'AB');
 
-        $payload = $this->actingAs($admin)->getJson("/api/admin/reports/results?exam_id={$exam->id}&class_name=2%20MMB")
+        $payload = $this->actingAs($admin)->getJson("/api/admin/reports/results?exam_id={$exam->id}&class_name=3%20MMB%20A")
             ->assertOk()
             ->assertJsonPath('summary.eligible_students', 3)
             ->assertJsonPath('summary.attempts_total', 1)

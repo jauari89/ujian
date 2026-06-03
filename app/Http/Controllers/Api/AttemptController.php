@@ -13,6 +13,7 @@ use Illuminate\Validation\Rule;
 class AttemptController extends Controller
 {
     private const TRUE_FALSE_ATTEMPT_LIMIT = 10;
+    private const MAX_PROCTOR_EVENTS = 100;
 
     public function show(Request $request, Attempt $attempt)
     {
@@ -77,6 +78,42 @@ class AttemptController extends Controller
         }
 
         return response()->json(['answer' => $answer]);
+    }
+
+    public function proctorEvent(Request $request, Attempt $attempt)
+    {
+        $this->authorizeAttempt($request, $attempt);
+
+        if ($attempt->status !== 'in_progress') {
+            return response()->json(['attempt' => $attempt]);
+        }
+
+        $data = $request->validate([
+            'type' => ['required', Rule::in(['camera_absence_warning', 'camera_absence_violation'])],
+            'message' => ['nullable', 'string', 'max:255'],
+            'absence_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
+            'warning_count' => ['required', 'integer', 'min:0', 'max:255'],
+        ]);
+
+        $events = collect($attempt->proctor_events ?? [])
+            ->push([
+                'type' => $data['type'],
+                'message' => $data['message'] ?? null,
+                'absence_seconds' => $data['absence_seconds'] ?? null,
+                'warning_count' => $data['warning_count'],
+                'recorded_at' => now()->toISOString(),
+            ])
+            ->take(-self::MAX_PROCTOR_EVENTS)
+            ->values()
+            ->all();
+
+        $attempt->update([
+            'proctor_warnings' => max((int) $attempt->proctor_warnings, (int) $data['warning_count']),
+            'proctor_violation' => $attempt->proctor_violation || $data['type'] === 'camera_absence_violation',
+            'proctor_events' => $events,
+        ]);
+
+        return response()->json(['attempt' => $attempt->fresh()]);
     }
 
     public function submit(Request $request, Attempt $attempt)
@@ -157,8 +194,12 @@ class AttemptController extends Controller
         }
 
         $existingQuestionIds = $attempt->answers()->pluck('question_id')->all();
+        $className = $attempt->loadMissing('user')->user?->class_name;
         $missingQuestions = $attempt->exam->questions()
             ->where('question_type', 'true_false')
+            ->where(fn ($questions) => $questions
+                ->whereNull('class_name')
+                ->when($className, fn ($questions) => $questions->orWhere('class_name', $className)))
             ->whereNotIn('id', $existingQuestionIds)
             ->orderBy('week')
             ->orderBy('id')

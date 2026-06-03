@@ -8,6 +8,7 @@ class Question extends Model
 {
     protected $fillable = [
         'exam_id',
+        'class_name',
         'week',
         'question_type',
         'question_text',

@@ -18,6 +18,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/attempts/{attempt}', [AttemptController::class, 'show']);
     Route::post('/attempts/{attempt}/answer', [AttemptController::class, 'answer'])->middleware('role:student');
+    Route::post('/attempts/{attempt}/proctor-event', [AttemptController::class, 'proctorEvent'])->middleware('role:student');
     Route::post('/attempts/{attempt}/submit', [AttemptController::class, 'submit']);
     Route::get('/attempts/{attempt}/result', [AttemptController::class, 'result']);
 

@@ -16,7 +16,7 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('exam:import-json {file : Path file JSON soal} {--course= : Nama mata kuliah} {--title= : Judul ujian}', function (string $file) {
+Artisan::command('exam:import-json {file : Path file JSON soal} {--course= : Nama mata kuliah} {--title= : Judul ujian} {--class= : Target kelas soal}', function (string $file) {
     $path = str_replace('\\', '/', $file);
     if (! is_file($path)) {
         $this->error("File tidak ditemukan: {$file}");
@@ -40,8 +40,9 @@ Artisan::command('exam:import-json {file : Path file JSON soal} {--course= : Nam
 
     $examTitle = $this->option('title') ?: ($payload['exam_title'] ?? 'Ujian '.$courseName);
     $duration = (int) ($payload['duration_minutes'] ?? 60);
+    $defaultClassName = trim((string) ($this->option('class') ?: ($payload['class_name'] ?? ''))) ?: null;
 
-    $exam = DB::transaction(function () use ($courseName, $examTitle, $duration, $payload) {
+    $exam = DB::transaction(function () use ($courseName, $examTitle, $duration, $payload, $defaultClassName) {
         $course = Course::firstOrCreate(
             ['slug' => Str::slug($courseName)],
             ['name' => $courseName, 'is_active' => true]
@@ -71,9 +72,11 @@ Artisan::command('exam:import-json {file : Path file JSON soal} {--course= : Nam
             Question::updateOrCreate(
                 [
                     'exam_id' => $exam->id,
+                    'class_name' => trim((string) ($question['class_name'] ?? $defaultClassName ?? '')) ?: null,
                     'question_text' => $question['question_text'],
                 ],
                 [
+                    'class_name' => trim((string) ($question['class_name'] ?? $defaultClassName ?? '')) ?: null,
                     'week' => $question['week'] ?? null,
                     'question_type' => in_array($questionType, ['true_false', 'hots'], true) ? $questionType : 'multiple_choice',
                     'option_a' => $question['option_a'],
@@ -93,6 +96,7 @@ Artisan::command('exam:import-json {file : Path file JSON soal} {--course= : Nam
     });
 
     $this->info("Import selesai: {$exam->course->name} / {$exam->title}");
+    $this->info('Target kelas: '.($defaultClassName ?: 'Umum / semua kelas'));
     $this->info("Total soal: {$exam->questions_count}");
 
     return self::SUCCESS;

@@ -14,7 +14,10 @@
 */
 
 return [
-    '2 MMB A' => ['animasi-3d'],
-    '2 MMB B' => ['desain-web'],
+    '2 MMB' => ['desain-web', 'animasi-3d'],
+    '2 MMB A' => ['desain-web', 'animasi-3d'],
+    '2 MMB B' => ['desain-web', 'animasi-3d'],
+    '3 MMB' => ['k3l'],
     '3 MMB A' => ['k3l'],
+    '3 MMB B' => ['k3l'],
 ];

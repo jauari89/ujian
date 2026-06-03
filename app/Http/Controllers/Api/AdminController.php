@@ -25,6 +25,7 @@ class AdminController extends Controller
             'file' => ['required', 'file', 'mimes:json,txt'],
             'course_id' => ['nullable', 'integer', 'exists:courses,id'],
             'course_name' => ['nullable', 'string', 'max:255'],
+            'class_name' => ['nullable', 'string', 'max:100'],
         ]);
 
         $payload = json_decode(file_get_contents($data['file']->getRealPath()), true);
@@ -34,10 +35,12 @@ class AdminController extends Controller
 
         validator($payload, [
             'course_name' => ['nullable', 'string', 'max:255'],
+            'class_name' => ['nullable', 'string', 'max:100'],
             'exam_title' => ['required', 'string', 'max:255'],
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:300'],
             'questions' => ['required', 'array', 'min:1'],
             'questions.*.week' => ['nullable', 'integer', 'min:1', 'max:16'],
+            'questions.*.class_name' => ['nullable', 'string', 'max:100'],
             'questions.*.question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots'])],
             'questions.*.question_text' => ['required', 'string'],
             'questions.*.option_a' => ['required', 'string'],
@@ -71,11 +74,16 @@ class AdminController extends Controller
                 ]
             );
 
+            $defaultClassName = $this->normalizeClassName($data['class_name'] ?? $payload['class_name'] ?? null);
             foreach ($payload['questions'] as $question) {
+                if (! array_key_exists('class_name', $question)) {
+                    $question['class_name'] = $defaultClassName;
+                }
                 $questionData = $this->normalizedQuestionData($question);
                 Question::updateOrCreate(
                     [
                         'exam_id' => $exam->id,
+                        'class_name' => $questionData['class_name'],
                         'question_text' => $question['question_text'],
                     ],
                     $questionData
@@ -112,12 +120,7 @@ class AdminController extends Controller
                 ->get()
                 ->map(fn (Exam $exam) => $this->examPayload($exam))
                 ->values(),
-            'classes' => User::where('role', 'student')
-                ->whereNotNull('class_name')
-                ->distinct()
-                ->orderBy('class_name')
-                ->pluck('class_name')
-                ->values(),
+            'classes' => $this->classOptions(),
         ]);
     }
 
@@ -179,7 +182,7 @@ class AdminController extends Controller
 
         $reportExam = $this->reportExam($filters);
         $questionAnalysis = $reportExam
-            ? $this->questionAnalysis($reportExam, $scoredAttempts->where('exam_id', $reportExam->id)->pluck('id')->all())
+            ? $this->questionAnalysis($reportExam, $scoredAttempts->where('exam_id', $reportExam->id)->pluck('id')->all(), $filters['class_name'] ?? null)
             : [];
 
         // Mahasiswa yang belum mengerjakan: tidak punya attempt sesuai filter aktif
@@ -197,12 +200,7 @@ class AdminController extends Controller
             'meta' => [
                 'courses' => Course::orderBy('name')->get(['id', 'name', 'slug']),
                 'exams' => Exam::with('course:id,name,slug')->orderBy('title')->get(['id', 'course_id', 'title']),
-                'classes' => User::where('role', 'student')
-                    ->whereNotNull('class_name')
-                    ->distinct()
-                    ->orderBy('class_name')
-                    ->pluck('class_name')
-                    ->values(),
+                'classes' => $this->classOptions(),
             ],
             'summary' => [
                 'eligible_students' => $eligibleStudents,
@@ -239,6 +237,8 @@ class AdminController extends Controller
                 'total_questions' => $attempt->total_questions,
                 'percentage' => $attempt->percentage,
                 'letter_grade' => $attempt->letter_grade,
+                'proctor_warnings' => $attempt->proctor_warnings,
+                'proctor_violation' => $attempt->proctor_violation,
                 'started_at' => $attempt->started_at,
                 'submitted_at' => $attempt->submitted_at,
             ])->values(),
@@ -333,12 +333,7 @@ class AdminController extends Controller
 
         return response()->json([
             'students' => $students->map(fn (User $student) => $this->studentPayload($student))->values(),
-            'classes' => User::where('role', 'student')
-                ->whereNotNull('class_name')
-                ->distinct()
-                ->orderBy('class_name')
-                ->pluck('class_name')
-                ->values(),
+            'classes' => $this->classOptions(),
         ]);
     }
 
@@ -581,6 +576,7 @@ class AdminController extends Controller
     {
         $data = $request->validate([
             'week' => ['nullable', 'integer', 'min:1', 'max:16'],
+            'class_name' => ['nullable', 'string', 'max:100'],
             'question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots'])],
             'question_text' => ['required', 'string'],
             'option_a' => ['required', 'string'],
@@ -604,6 +600,7 @@ class AdminController extends Controller
         return [
             'id' => $question->id,
             'exam_id' => $question->exam_id,
+            'class_name' => $question->class_name,
             'week' => $question->week,
             'question_type' => $question->question_type ?? 'multiple_choice',
             'question_text' => $question->question_text,
@@ -623,6 +620,7 @@ class AdminController extends Controller
         if ($type === 'true_false') {
             return [
                 'week' => $data['week'] ?? null,
+                'class_name' => $this->normalizeClassName($data['class_name'] ?? null),
                 'question_type' => 'true_false',
                 'question_text' => $data['question_text'],
                 'option_a' => $data['option_a'],
@@ -643,6 +641,7 @@ class AdminController extends Controller
 
         return [
             'week' => $data['week'] ?? null,
+            'class_name' => $this->normalizeClassName($data['class_name'] ?? null),
             'question_type' => $normalizedType,
             'question_text' => $data['question_text'],
             'option_a' => $data['option_a'],
@@ -664,6 +663,13 @@ class AdminController extends Controller
                     : false,
             ])
             ->all();
+    }
+
+    private function normalizeClassName(?string $className): ?string
+    {
+        $className = trim((string) $className);
+
+        return $className === '' ? null : $className;
     }
 
     private function ensureQuestionBelongsToExam(Exam $exam, Question $question): void
@@ -729,10 +735,15 @@ class AdminController extends Controller
         return null;
     }
 
-    private function questionAnalysis(Exam $exam, array $attemptIds): array
+    private function questionAnalysis(Exam $exam, array $attemptIds, ?string $className = null): array
     {
+        $questionQuery = fn () => $exam->questions()
+            ->where(fn ($questions) => $questions
+                ->whereNull('class_name')
+                ->when($className, fn ($questions) => $questions->orWhere('class_name', $className)));
+
         if (empty($attemptIds)) {
-            return $exam->questions()
+            return $questionQuery()
                 ->orderByRaw("case when question_type = 'true_false' then 1 else 0 end")
                 ->orderBy('week')
                 ->orderBy('id')
@@ -753,14 +764,14 @@ class AdminController extends Controller
         }
 
         $answers = AttemptAnswer::whereIn('attempt_id', $attemptIds)
-            ->whereIn('question_id', $exam->questions()->pluck('id'))
+            ->whereIn('question_id', $questionQuery()->pluck('id'))
             ->with('question:id,question_type')
             ->get()
             ->groupBy('question_id');
 
         $participantCount = count($attemptIds);
 
-        return $exam->questions()
+        return $questionQuery()
             ->orderByRaw("case when question_type = 'true_false' then 1 else 0 end")
             ->orderBy('week')
             ->orderBy('id')
@@ -796,6 +807,19 @@ class AdminController extends Controller
             ->groupBy(fn (Attempt $attempt) => $attempt->{$field} ?: '-')
             ->map(fn ($group, $label) => ['label' => $label, 'total' => $group->count()])
             ->sortBy('label')
+            ->values();
+    }
+
+    private function classOptions()
+    {
+        return User::where('role', 'student')
+            ->whereNotNull('class_name')
+            ->distinct()
+            ->pluck('class_name')
+            ->merge(array_keys(config('class_courses', [])))
+            ->filter()
+            ->unique()
+            ->sort()
             ->values();
     }
 
