@@ -84,6 +84,7 @@ function App() {
                     <Route path="/attempt/:id" element={<Private user={user}><AttemptPage /></Private>} />
                     <Route path="/result/:id" element={<Private user={user}><ResultPage /></Private>} />
                     <Route path="/admin/master" element={<Private user={user} role="admin"><AdminMaster /></Private>} />
+                    <Route path="/admin/grading" element={<Private user={user} role="admin"><AdminGrading /></Private>} />
                     <Route path="/admin/students" element={<Private user={user} role="admin"><AdminStudents /></Private>} />
                     <Route path="/admin/report" element={<Private user={user} role="admin"><AdminReport /></Private>} />
                     <Route path="/admin/import" element={<Private user={user} role="admin"><AdminImport /></Private>} />
@@ -125,6 +126,7 @@ function AdminNav() {
     const location = useLocation();
     const items = [
         { to: '/admin/import', label: 'Console', icon: LayoutDashboard },
+        { to: '/admin/grading', label: 'Nilai', icon: Pencil },
         { to: '/admin/master', label: 'Master Data', icon: Database },
         { to: '/admin/students', label: 'Mahasiswa', icon: Users },
         { to: '/admin/report', label: 'Report', icon: BarChart3 },
@@ -1986,11 +1988,165 @@ function questionClassLabel(className) {
     return className || 'Umum';
 }
 
+function AdminGrading() {
+    const [attempts, setAttempts] = useState([]);
+    const [gradingAttemptId, setGradingAttemptId] = useState(null);
+    const [gradeForm, setGradeForm] = useState({});
+    const [busy, setBusy] = useState('');
+    const [message, setMessage] = useState('');
+    const [error, setError] = useState('');
+    const [onlyPending, setOnlyPending] = useState(false);
+
+    const loadAttempts = () => api.get('/api/admin/attempts')
+        .then((data) => setAttempts(data.attempts.data))
+        .catch((err) => setError(err.message));
+
+    useEffect(() => {
+        loadAttempts();
+    }, []);
+
+    const toggleGrading = (attempt) => {
+        if (gradingAttemptId === attempt.id) {
+            setGradingAttemptId(null);
+            return;
+        }
+        const form = {};
+        (attempt.answers || []).forEach((answer) => {
+            form[answer.id] = {
+                manual_score: answer.manual_score ?? '',
+                manual_feedback: answer.manual_feedback ?? '',
+            };
+        });
+        setGradeForm(form);
+        setGradingAttemptId(attempt.id);
+    };
+
+    const saveGrade = async (answer) => {
+        const form = gradeForm[answer.id] || {};
+        setBusy(`grade-${answer.id}`);
+        setMessage('');
+        try {
+            const data = await api.post(`/api/admin/answers/${answer.id}/grade`, {
+                manual_score: form.manual_score === '' ? null : Number(form.manual_score),
+                manual_feedback: form.manual_feedback || null,
+            });
+            setMessage(data.message);
+            await loadAttempts();
+        } catch (err) {
+            setMessage(err.message);
+        } finally {
+            setBusy('');
+        }
+    };
+
+    // Hanya attempt yang punya jawaban perlu koreksi (HOTS / tugas PDF).
+    const gradable = attempts
+        .filter((attempt) => (attempt.answers || []).length > 0)
+        .filter((attempt) => ! onlyPending || (attempt.answers || []).some((answer) => answer.manual_score == null));
+    const pendingCount = attempts.reduce((total, attempt) => total
+        + (attempt.answers || []).filter((answer) => answer.manual_score == null).length, 0);
+
+    return (
+        <div className="admin-page">
+            <section className="admin-titlebar">
+                <div>
+                    <h1>Nilai &amp; Koreksi</h1>
+                    <p className="muted">Koreksi esai HOTS &amp; tugas PDF. Nilai akhir otomatis digabung dengan skor PG/TF (tiap soal 1 poin, jawaban manual = nilai/100 poin).</p>
+                </div>
+                <button className="btn secondary" onClick={loadAttempts}><RotateCcw size={17} /> Refresh</button>
+            </section>
+
+            {message && <div className={`alert ${message.toLowerCase().includes('gagal') || message.toLowerCase().includes('error') ? 'error' : ''}`}>{message}</div>}
+            {error && <div className="alert error">{error}</div>}
+
+            <section className="admin-overview" aria-label="Ringkasan koreksi">
+                <div className="overview-item"><span>Attempt perlu koreksi</span><strong>{gradable.length}</strong></div>
+                <div className="overview-item"><span>Jawaban belum dinilai</span><strong>{pendingCount}</strong></div>
+            </section>
+
+            <section className="panel">
+                <div className="section-head">
+                    <div>
+                        <h2>Daftar Koreksi</h2>
+                        <p className="muted">Klik <strong>Nilai</strong> untuk membaca jawaban dan memberi skor. Hingga 50 attempt terakhir.</p>
+                    </div>
+                    <label className="check-row compact" style={{ margin: 0 }}>
+                        <input type="checkbox" checked={onlyPending} onChange={(event) => setOnlyPending(event.target.checked)} />
+                        Hanya yang belum dinilai
+                    </label>
+                </div>
+                <div className="table-wrap">
+                    <table>
+                        <thead><tr><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th><th>Koreksi</th></tr></thead>
+                        <tbody>
+                            {gradable.map((attempt) => {
+                                const submissions = attempt.answers || [];
+                                const expanded = gradingAttemptId === attempt.id;
+                                const pending = submissions.filter((answer) => answer.manual_score == null).length;
+                                return (
+                                    <React.Fragment key={attempt.id}>
+                                        <tr>
+                                            <td>{attempt.user.name}</td>
+                                            <td>{attempt.user.nrp}</td>
+                                            <td>{attempt.exam.title}</td>
+                                            <td>{attempt.package?.code || '-'}</td>
+                                            <td><span className={`status-pill mini ${attempt.status === 'submitted' ? 'open' : attempt.status === 'in_progress' ? 'scheduled' : 'closed'}`}>{attempt.status}</span></td>
+                                            <td>{attempt.score}/{attempt.total_questions}</td>
+                                            <td>{attempt.letter_grade || '-'}</td>
+                                            <td>
+                                                <button className="btn secondary mini" onClick={() => toggleGrading(attempt)}>
+                                                    {expanded ? 'Tutup' : `Nilai (${submissions.length})`}
+                                                </button>
+                                                {pending > 0 && <span className="status-pill mini scheduled" style={{ marginLeft: 6 }}>{pending} baru</span>}
+                                            </td>
+                                        </tr>
+                                        {expanded && submissions.map((answer) => (
+                                            <tr key={answer.id} className="grade-row">
+                                                <td colSpan="8">
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', padding: '6px 2px' }}>
+                                                        <div style={{ flex: '1 1 320px' }}>
+                                                            <span className="badge">{questionTypeLabel(answer.question?.question_type)}</span> <strong>{answer.question?.question_text || '-'}</strong>
+                                                            {answer.question?.question_type === 'hots' ? (
+                                                                <div className="muted" style={{ marginTop: 6, whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto', background: 'var(--surface-2, #f8fafc)', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: 10 }}>
+                                                                    {(answer.essay_answer || '').trim() || 'Belum dijawab mahasiswa.'}
+                                                                </div>
+                                                            ) : (
+                                                                <div className="muted" style={{ marginTop: 4 }}>
+                                                                    {answer.file_path
+                                                                        ? <a href={`/api/admin/answers/${answer.id}/file`} target="_blank" rel="noreferrer"><FileUp size={14} /> {answer.file_original_name || 'tugas.pdf'}{answer.file_size ? ` (${Math.round(answer.file_size / 1024)} KB)` : ''}</a>
+                                                                        : 'Belum mengumpulkan berkas.'}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="field" style={{ width: 110, margin: 0 }}>
+                                                            <label>Nilai (0-100)</label>
+                                                            <input type="number" min="0" max="100" step="0.01" value={gradeForm[answer.id]?.manual_score ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_score: event.target.value } })} />
+                                                        </div>
+                                                        <div className="field" style={{ flex: '1 1 200px', margin: 0 }}>
+                                                            <label>Catatan</label>
+                                                            <input value={gradeForm[answer.id]?.manual_feedback ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_feedback: event.target.value } })} />
+                                                        </div>
+                                                        <button className="btn primary mini" disabled={busy === `grade-${answer.id}`} onClick={() => saveGrade(answer)}>Simpan</button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </React.Fragment>
+                                );
+                            })}
+                            {gradable.length === 0 && <tr><td colSpan="8">{onlyPending ? 'Tidak ada jawaban yang belum dinilai.' : 'Belum ada jawaban HOTS atau tugas untuk dikoreksi.'}</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    );
+}
+
 function AdminImport() {
     const [file, setFile] = useState(null);
     const [importClass, setImportClass] = useState('');
     const [message, setMessage] = useState('');
-    const [attempts, setAttempts] = useState([]);
     const [exams, setExams] = useState([]);
     const [courses, setCourses] = useState([]);
     const [classes, setClasses] = useState([]);
@@ -2004,10 +2160,7 @@ function AdminImport() {
     const [activeQuestionType, setActiveQuestionType] = useState('multiple_choice');
     const [questionClassFilter, setQuestionClassFilter] = useState('__all');
     const [busy, setBusy] = useState('');
-    const [gradingAttemptId, setGradingAttemptId] = useState(null);
-    const [gradeForm, setGradeForm] = useState({});
 
-    const loadAttempts = () => api.get('/api/admin/attempts').then((data) => setAttempts(data.attempts.data));
     const loadExams = () => api.get('/api/admin/exams').then((data) => {
         setExams(data.exams || []);
         setCourses(data.courses || []);
@@ -2016,7 +2169,6 @@ function AdminImport() {
     });
 
     useEffect(() => {
-        loadAttempts();
         loadExams();
     }, []);
 
@@ -2025,7 +2177,6 @@ function AdminImport() {
     const totalQuestions = exams.reduce((total, exam) => total + Number(exam.questions_count || 0), 0);
     const openExams = exams.filter((exam) => exam.is_open_now).length;
     const totalAttempts = exams.reduce((total, exam) => total + Number(exam.attempts_count || 0), 0);
-    const latestAttempts = attempts.slice(0, 50);
     const editingQuestion = questions.find((question) => question.id === editingQuestionId);
     const activeQuestionClass = questionClassFilter === '__all' ? '' : questionClassFilter;
     const classFilteredQuestions = questions.filter((question) => questionClassFilter === '__all' || (question.class_name || '') === questionClassFilter);
@@ -2142,7 +2293,7 @@ function AdminImport() {
             setMessage(data.message);
             setSelectedExamId('');
             setQuestions([]);
-            await Promise.all([loadExams(), loadAttempts()]);
+            await loadExams();
         } catch (err) {
             setMessage(err.message);
         } finally {
@@ -2162,7 +2313,7 @@ function AdminImport() {
                 class_name: resetClass || null,
             });
             setMessage(data.message);
-            await Promise.all([loadExams(), loadAttempts()]);
+            await loadExams();
         } catch (err) {
             setMessage(err.message);
         } finally {
@@ -2224,40 +2375,6 @@ function AdminImport() {
             setMessage(data.message);
             clearQuestionForm();
             await Promise.all([loadQuestions(selectedExam.id), loadExams()]);
-        } catch (err) {
-            setMessage(err.message);
-        } finally {
-            setBusy('');
-        }
-    };
-
-    const toggleGrading = (attempt) => {
-        if (gradingAttemptId === attempt.id) {
-            setGradingAttemptId(null);
-            return;
-        }
-        const form = {};
-        (attempt.answers || []).forEach((answer) => {
-            form[answer.id] = {
-                manual_score: answer.manual_score ?? '',
-                manual_feedback: answer.manual_feedback ?? '',
-            };
-        });
-        setGradeForm(form);
-        setGradingAttemptId(attempt.id);
-    };
-
-    const saveGrade = async (answer) => {
-        const form = gradeForm[answer.id] || {};
-        setBusy(`grade-${answer.id}`);
-        setMessage('');
-        try {
-            const data = await api.post(`/api/admin/answers/${answer.id}/grade`, {
-                manual_score: form.manual_score === '' ? null : Number(form.manual_score),
-                manual_feedback: form.manual_feedback || null,
-            });
-            setMessage(data.message);
-            await loadAttempts();
         } catch (err) {
             setMessage(err.message);
         } finally {
@@ -2556,77 +2673,6 @@ function AdminImport() {
                         clearQuestionForm={clearQuestionForm}
                         deleteQuestion={deleteQuestion}
                     />
-                </div>
-            </section>
-
-            <section className="panel">
-                <div className="section-head">
-                    <div>
-                        <h2>Attempt &amp; Koreksi</h2>
-                        <p className="muted">Hingga 50 attempt terakhir. Kolom <strong>Koreksi</strong> untuk menilai esai HOTS &amp; tugas PDF — nilai akhir otomatis digabung dengan skor PG/TF.</p>
-                    </div>
-                    <button className="btn secondary" onClick={loadAttempts}>Refresh</button>
-                </div>
-                <div className="table-wrap">
-                    <table>
-                        <thead><tr><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th><th>Koreksi</th></tr></thead>
-                        <tbody>
-                            {latestAttempts.map((attempt) => {
-                                const submissions = attempt.answers || [];
-                                const expanded = gradingAttemptId === attempt.id;
-                                return (
-                                    <React.Fragment key={attempt.id}>
-                                        <tr>
-                                            <td>{attempt.user.name}</td>
-                                            <td>{attempt.user.nrp}</td>
-                                            <td>{attempt.exam.title}</td>
-                                            <td>{attempt.package?.code || '-'}</td>
-                                            <td><span className={`status-pill mini ${attempt.status === 'submitted' ? 'open' : attempt.status === 'in_progress' ? 'scheduled' : 'closed'}`}>{attempt.status}</span></td>
-                                            <td>{attempt.score}/{attempt.total_questions}</td>
-                                            <td>{attempt.letter_grade || '-'}</td>
-                                            <td>
-                                                {submissions.length > 0
-                                                    ? <button className="btn secondary mini" onClick={() => toggleGrading(attempt)}>{expanded ? 'Tutup' : `Nilai (${submissions.length})`}</button>
-                                                    : <span className="muted">-</span>}
-                                            </td>
-                                        </tr>
-                                        {expanded && submissions.map((answer) => (
-                                            <tr key={answer.id} className="grade-row">
-                                                <td colSpan="8">
-                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', padding: '6px 2px' }}>
-                                                        <div style={{ flex: '1 1 320px' }}>
-                                                            <span className="badge">{questionTypeLabel(answer.question?.question_type)}</span> <strong>{answer.question?.question_text || '-'}</strong>
-                                                            {answer.question?.question_type === 'hots' ? (
-                                                                <div className="muted" style={{ marginTop: 6, whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto', background: 'var(--surface-2, #f8fafc)', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: 10 }}>
-                                                                    {(answer.essay_answer || '').trim() || 'Belum dijawab mahasiswa.'}
-                                                                </div>
-                                                            ) : (
-                                                                <div className="muted" style={{ marginTop: 4 }}>
-                                                                    {answer.file_path
-                                                                        ? <a href={`/api/admin/answers/${answer.id}/file`} target="_blank" rel="noreferrer"><FileUp size={14} /> {answer.file_original_name || 'tugas.pdf'}{answer.file_size ? ` (${Math.round(answer.file_size / 1024)} KB)` : ''}</a>
-                                                                        : 'Belum mengumpulkan berkas.'}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                        <div className="field" style={{ width: 110, margin: 0 }}>
-                                                            <label>Nilai (0-100)</label>
-                                                            <input type="number" min="0" max="100" step="0.01" value={gradeForm[answer.id]?.manual_score ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_score: event.target.value } })} />
-                                                        </div>
-                                                        <div className="field" style={{ flex: '1 1 200px', margin: 0 }}>
-                                                            <label>Catatan</label>
-                                                            <input value={gradeForm[answer.id]?.manual_feedback ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_feedback: event.target.value } })} />
-                                                        </div>
-                                                        <button className="btn primary mini" disabled={busy === `grade-${answer.id}`} onClick={() => saveGrade(answer)}>Simpan</button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </React.Fragment>
-                                );
-                            })}
-                            {latestAttempts.length === 0 && <tr><td colSpan="8">Belum ada attempt mahasiswa.</td></tr>}
-                        </tbody>
-                    </table>
                 </div>
             </section>
         </div>
