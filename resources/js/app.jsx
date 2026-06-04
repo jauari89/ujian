@@ -1747,6 +1747,7 @@ function AdminReport() {
                                                 </span>
                                             </th>
                                         ))}
+                                        <th>Aksi</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1766,9 +1767,12 @@ function AdminReport() {
                                             <td><span className="badge">{attempt.letter_grade || '-'}</span></td>
                                             <td>{attempt.proctor_warnings || 0}/{PROCTOR_WARNING_LIMIT}</td>
                                             <td>{attempt.proctor_violation ? <span className="badge badge-warn">Pelanggaran</span> : <span className="badge">Aman</span>}</td>
+                                            <td>{attempt.status !== 'in_progress'
+                                                ? <Link className="btn secondary mini" to={`/result/${attempt.id}`}>Lihat jawaban</Link>
+                                                : <span className="muted">-</span>}</td>
                                         </tr>
                                     ))}
-                                    {sortedStudentResults.length === 0 && <tr><td colSpan="14">Belum ada attempt sesuai filter.</td></tr>}
+                                    {sortedStudentResults.length === 0 && <tr><td colSpan="15">Belum ada attempt sesuai filter.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
