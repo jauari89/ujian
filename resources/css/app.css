@@ -1425,6 +1425,23 @@ h3 {
 
 .table-wrap {
     overflow-x: auto;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Wide tables must scroll INSIDE their panel, not stretch the whole page.
+   Grid/flex children default to min-width:auto (= content width), so a table
+   with nowrap cells forces the page wider than the viewport. min-width:0 lets
+   the panel shrink to the viewport so .table-wrap's overflow-x can engage. */
+.panel,
+.card,
+.grid > *,
+.grid.two > *,
+.admin-page > *,
+.admin-main-grid > *,
+.master-grid > *,
+.question-workspace > * {
+    min-width: 0;
 }
 
 table {
@@ -1550,5 +1567,25 @@ th.sortable:hover {
 @media (max-width: 520px) {
     .admin-overview {
         grid-template-columns: 1fr;
+    }
+
+    /* Tighter tables so more columns fit before horizontal scroll kicks in. */
+    th,
+    td {
+        padding: 9px 10px;
+        font-size: 13px;
+    }
+
+    .report-tabs {
+        flex-wrap: wrap;
+    }
+
+    .report-tab {
+        flex: 1 1 auto;
+    }
+
+    .admin-titlebar .btn,
+    .section-head .btn {
+        width: 100%;
     }
 }
