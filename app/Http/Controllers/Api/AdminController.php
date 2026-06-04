@@ -13,6 +13,7 @@ use App\Models\Question;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -107,10 +108,106 @@ class AdminController extends Controller
     public function attempts()
     {
         return response()->json([
-            'attempts' => Attempt::with(['user:id,nrp,name,email,class_name', 'exam:id,course_id,title', 'exam.course:id,name,slug', 'package:id,name,code'])
+            'attempts' => Attempt::with([
+                'user:id,nrp,name,email,class_name',
+                'exam:id,course_id,title',
+                'exam.course:id,name,slug',
+                'package:id,name,code',
+                'answers' => fn ($answers) => $answers
+                    ->whereHas('question', fn ($question) => $question->where('question_type', 'file_upload'))
+                    ->with('question:id,question_type,question_text,week'),
+            ])
                 ->latest('id')
                 ->paginate(50),
         ]);
+    }
+
+    /**
+     * Berkas tugas (PDF) yang dikumpulkan pada satu attempt, untuk dinilai dosen.
+     */
+    public function attemptAnswers(Attempt $attempt)
+    {
+        $attempt->load([
+            'user:id,nrp,name,class_name',
+            'exam:id,title',
+            'answers' => fn ($answers) => $answers
+                ->whereHas('question', fn ($question) => $question->where('question_type', 'file_upload'))
+                ->with('question:id,question_type,question_text,week'),
+        ]);
+
+        return response()->json(['attempt' => $attempt]);
+    }
+
+    public function downloadAnswerFile(AttemptAnswer $answer)
+    {
+        abort_unless($answer->file_path && Storage::disk('local')->exists($answer->file_path), 404, 'Berkas tidak ditemukan.');
+
+        return Storage::disk('local')->download($answer->file_path, $answer->file_original_name ?: 'tugas.pdf');
+    }
+
+    public function gradeAnswer(Request $request, AttemptAnswer $answer)
+    {
+        $data = $request->validate([
+            'manual_score' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'manual_feedback' => ['nullable', 'string', 'max:5000'],
+        ]);
+
+        $answer->update([
+            'manual_score' => $data['manual_score'] ?? null,
+            'manual_feedback' => $data['manual_feedback'] ?? null,
+            'graded_at' => now(),
+        ]);
+
+        $this->recomputeManualGrade($answer->attempt);
+
+        return response()->json([
+            'message' => 'Nilai tugas tersimpan.',
+            'answer' => $answer->fresh(),
+        ]);
+    }
+
+    /**
+     * Hitung ulang nilai attempt dari rata-rata nilai manual (tugas/HOTS) yang
+     * sudah dinilai dosen, lalu petakan ke skala grade mata kuliah.
+     */
+    private function recomputeManualGrade(Attempt $attempt): void
+    {
+        $attempt->loadMissing('answers', 'exam.course');
+
+        $scores = $attempt->answers
+            ->whereNotNull('manual_score')
+            ->pluck('manual_score');
+
+        if ($scores->isEmpty()) {
+            return;
+        }
+
+        $percentage = round((float) $scores->avg(), 2);
+        $grade = $this->gradeForCourse($attempt->exam?->course, $percentage);
+
+        $attempt->update([
+            'percentage' => $percentage,
+            'letter_grade' => $grade?->letter_grade,
+            'numeric_grade' => $grade?->numeric_grade,
+            'grade_category' => $grade?->category,
+        ]);
+    }
+
+    private function gradeForCourse(?Course $course, float $percentage): ?GradeScale
+    {
+        if (! $course) {
+            return null;
+        }
+
+        if (! $course->gradeScales()->exists()) {
+            GradeScale::ensureDefaultsForCourse($course);
+        }
+
+        return GradeScale::where('course_id', $course->id)
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->get()
+            ->first(fn (GradeScale $scale) => $scale->contains($percentage));
     }
 
     public function exams()
@@ -614,7 +711,7 @@ class AdminController extends Controller
         $data = $request->validate([
             'week' => ['nullable', 'integer', 'min:1', 'max:16'],
             'class_name' => ['nullable', 'string', 'max:100'],
-            'question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots'])],
+            'question_type' => ['nullable', Rule::in(['multiple_choice', 'true_false', 'hots', 'file_upload'])],
             'level' => ['nullable', 'string', 'max:30'],
             'question_text' => ['required', 'string'],
             'image_url' => ['nullable', 'string'],
@@ -785,6 +882,24 @@ class AdminController extends Controller
                 'option_d' => $data['option_d'],
                 'correct_option' => $data['correct_option'] ?? 'a',
                 'correct_options' => $this->normalizeBooleanOptions($data['correct_options'] ?? []),
+                'explanation' => $data['explanation'] ?? null,
+            ];
+        }
+
+        if ($type === 'file_upload') {
+            return [
+                'week' => $data['week'] ?? null,
+                'class_name' => $this->normalizeClassName($data['class_name'] ?? null),
+                'question_type' => 'file_upload',
+                'level' => $data['level'] ?? null,
+                'question_text' => $data['question_text'],
+                'image_url' => $data['image_url'] ?? null,
+                'option_a' => $data['option_a'] ?? '-',
+                'option_b' => $data['option_b'] ?? '-',
+                'option_c' => $data['option_c'] ?? '-',
+                'option_d' => $data['option_d'] ?? '-',
+                'correct_option' => $data['correct_option'] ?? 'a',
+                'correct_options' => null,
                 'explanation' => $data['explanation'] ?? null,
             ];
         }

@@ -553,6 +553,7 @@ function AttemptPage() {
     const [error, setError] = useState('');
     const [now, setNow] = useState(Date.now());
     const [submitting, setSubmitting] = useState(false);
+    const [uploading, setUploading] = useState(false);
     const [cameraStatus, setCameraStatus] = useState({ state: 'checking', message: 'Memeriksa kamera...' });
     const [cameraBusy, setCameraBusy] = useState(false);
     const [proctorState, setProctorState] = useState({
@@ -654,9 +655,13 @@ function AttemptPage() {
     }, [id]);
 
     useEffect(() => {
+        if (!attempt) return undefined;
+        const assignment = (attempt.answers || []).length > 0
+            && attempt.answers.every((answer) => answer.question?.question_type === 'file_upload');
+        if (assignment) return undefined;
         startCamera();
         return () => stopCamera();
-    }, [id]);
+    }, [attempt?.id]);
 
     useEffect(() => {
         if (videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) {
@@ -678,6 +683,7 @@ function AttemptPage() {
 
     const answers = attempt?.answers || [];
     const active = answers[current];
+    const isAssignment = answers.length > 0 && answers.every((answer) => answer.question?.question_type === 'file_upload');
     const multipleChoiceAnswers = answers.filter((answer) => !['true_false', 'hots'].includes(answer.question?.question_type));
     const trueFalseAnswers = answers.filter((answer) => answer.question?.question_type === 'true_false');
     const hotsAnswers = answers.filter((answer) => answer.question?.question_type === 'hots');
@@ -700,7 +706,7 @@ function AttemptPage() {
     const remaining = useMemo(() => attempt ? Math.max(0, new Date(attempt.ends_at).getTime() - now) : 0, [attempt, now]);
     const warning = remaining <= 5 * 60 * 1000;
     const cameraReady = cameraStatus.state === 'ready';
-    const cameraRequired = attempt?.status === 'in_progress';
+    const cameraRequired = attempt?.status === 'in_progress' && !isAssignment;
     const cameraLocked = cameraRequired && !cameraReady;
     const cameraLabel = cameraReady ? 'Aktif' : cameraStatus.state === 'checking' ? 'Cek' : 'Wajib';
 
@@ -902,6 +908,38 @@ function AttemptPage() {
         }
     };
 
+    const uploadTugas = async (answer, file) => {
+        if (!file || !answer || attempt.status !== 'in_progress') return;
+        if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+            setError('Berkas tugas harus berformat PDF.');
+            return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            setError('Ukuran berkas melebihi 10 MB.');
+            return;
+        }
+        setUploading(true);
+        setError('');
+        setSaving('Mengunggah...');
+        try {
+            const body = new FormData();
+            body.append('question_id', answer.question_id);
+            body.append('file', file);
+            const data = await api.post(`/api/attempts/${id}/upload`, body);
+            setAnswerState(answer.id, {
+                file_path: data.answer.file_path,
+                file_original_name: data.answer.file_original_name,
+                file_size: data.answer.file_size,
+            });
+            setSaving('Saved');
+        } catch (err) {
+            setError(err.message);
+            setSaving('');
+        } finally {
+            setUploading(false);
+        }
+    };
+
     const submit = async (auto = false) => {
         if (!auto && !ensureCameraReady()) return;
         const unanswered = answers.filter((answer) => !answerIsFilled(answer)).length;
@@ -922,6 +960,63 @@ function AttemptPage() {
 
     if (error && !attempt) return <div className="alert error">{error}</div>;
     if (!attempt || !active) return <div>Memuat attempt...</div>;
+
+    if (isAssignment) {
+        const closed = attempt.status !== 'in_progress' || remaining === 0;
+        const allUploaded = answers.every((answer) => Boolean(answer.file_path));
+        return (
+            <div className="exam-layout assignment-layout" style={{ display: 'block', maxWidth: 760, margin: '0 auto' }}>
+                <section className="panel">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', marginBottom: 18 }}>
+                        <div>
+                            <h2 style={{ margin: 0 }}>{attempt.exam?.title}</h2>
+                            <p className="muted" style={{ margin: '6px 0 0' }}>Pengumpulan Tugas (PDF) | {attempt.exam?.course?.name || '-'}</p>
+                        </div>
+                        <span className={`status-pill ${closed ? 'closed' : 'open'}`}>{closed ? 'Ditutup' : 'Dibuka'}</span>
+                    </div>
+                    <p className="muted">Batas pengumpulan: <strong>{formatDateTime(attempt.ends_at)}</strong></p>
+                    {error && <div className="alert error">{error}</div>}
+                    {closed && <div className="alert">Masa pengumpulan sudah berakhir. Berkas tidak bisa diubah lagi.</div>}
+                    {answers.map((answer, index) => (
+                        <div key={answer.id} className="assignment-card" style={{ border: '1px solid var(--border, #e2e8f0)', borderRadius: 12, padding: 16, marginTop: 14 }}>
+                            {answers.length > 1 && <h3 style={{ marginTop: 0 }}>Tugas {index + 1}</h3>}
+                            <p className="question-text">{answer.question?.question_text}</p>
+                            {answer.file_path ? (
+                                <div className="alert" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Check size={16} /> Terkumpul: <strong>{answer.file_original_name}</strong>
+                                    {answer.file_size ? <span className="muted">({Math.round(answer.file_size / 1024)} KB)</span> : null}
+                                </div>
+                            ) : (
+                                <p className="muted">Belum ada berkas yang dikumpulkan.</p>
+                            )}
+                            {!closed && (
+                                <label className="field" style={{ marginTop: 8 }}>
+                                    <span>{answer.file_path ? 'Ganti berkas PDF' : 'Pilih berkas PDF (maks 10 MB)'}</span>
+                                    <input
+                                        className="file-input"
+                                        type="file"
+                                        accept="application/pdf,.pdf"
+                                        disabled={uploading}
+                                        onChange={(event) => {
+                                            const file = event.target.files[0];
+                                            event.target.value = '';
+                                            uploadTugas(answer, file);
+                                        }}
+                                    />
+                                </label>
+                            )}
+                        </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 18, alignItems: 'center' }}>
+                        <span className="muted">{saving === 'Saved' ? <><Check size={14} /> Tersimpan</> : saving}</span>
+                        {attempt.status === 'in_progress'
+                            ? <button className="btn primary" disabled={submitting || uploading} onClick={() => submit(false)}>{allUploaded ? 'Kumpulkan & Selesai' : 'Selesai (sebagian belum diunggah)'}</button>
+                            : <button className="btn secondary" onClick={() => navigate(`/result/${id}`)}>Lihat Status</button>}
+                    </div>
+                </section>
+            </div>
+        );
+    }
 
     const mm = String(Math.floor(remaining / 60000)).padStart(2, '0');
     const ss = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
@@ -1044,6 +1139,21 @@ function AttemptPage() {
                         />
                         <button className="btn secondary" disabled={cameraLocked} onClick={saveHotsAnswer}>Simpan Jawaban HOTS</button>
                     </div>
+                ) : active.question?.question_type === 'file_upload' ? (
+                    <div className="field">
+                        <label>{active.file_path ? `Terkumpul: ${active.file_original_name}` : 'Unggah tugas (PDF, maks 10 MB)'}</label>
+                        <input
+                            className="file-input"
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            disabled={cameraLocked || uploading}
+                            onChange={(event) => {
+                                const file = event.target.files[0];
+                                event.target.value = '';
+                                uploadTugas(active, file);
+                            }}
+                        />
+                    </div>
                 ) : (
                     questionKeys.map((key) => (
                         <button key={key} disabled={cameraLocked} className={`option ${active.selected_option === key ? 'selected' : ''}`} onClick={() => choose(key)}>
@@ -1110,7 +1220,7 @@ function ResultPage() {
                             <tr key={answer.id}>
                                 <td>{index + 1}</td>
                                 <td>{answerDisplay(answer)}</td>
-                                <td>{answer.question?.question_type === 'hots' ? 'Perlu review' : answer.is_correct ? 'Benar' : 'Salah'}</td>
+                                <td>{['hots', 'file_upload'].includes(answer.question?.question_type) ? (answer.manual_score != null ? `Nilai ${answer.manual_score}` : 'Perlu review') : answer.is_correct ? 'Benar' : 'Salah'}</td>
                             </tr>
                         ))}
                     </tbody>
@@ -1816,10 +1926,11 @@ const questionTypeOptions = [
     { type: 'multiple_choice', label: 'ABCD', title: 'Soal ABCD', helper: 'Pilihan A-D dengan satu kunci jawaban.' },
     { type: 'true_false', label: 'T/F', title: 'Soal True/False', helper: 'Pernyataan A-D dengan kunci benar/salah.' },
     { type: 'hots', label: 'HOTS', title: 'Soal HOTS', helper: 'Uraian bergambar untuk analisis tingkat tinggi.' },
+    { type: 'file_upload', label: 'Tugas', title: 'Upload Tugas (PDF)', helper: 'Mahasiswa mengumpulkan satu berkas PDF, dinilai manual.' },
 ];
 
 function normalizeQuestionType(type) {
-    return type === 'true_false' || type === 'hots' ? type : 'multiple_choice';
+    return ['true_false', 'hots', 'file_upload'].includes(type) ? type : 'multiple_choice';
 }
 
 function questionTypeLabel(type) {
@@ -1832,6 +1943,10 @@ function questionTypeMeta(type) {
 
 function answerIsFilled(answer) {
     if (!answer) return false;
+    if (answer.question?.question_type === 'file_upload') {
+        return Boolean(answer.file_path);
+    }
+
     if (answer.question?.question_type === 'hots') {
         return Boolean((answer.essay_answer || '').trim());
     }
@@ -1846,6 +1961,10 @@ function answerIsFilled(answer) {
 }
 
 function answerDisplay(answer) {
+    if (answer.question?.question_type === 'file_upload') {
+        return answer.file_original_name || '-';
+    }
+
     if (answer.question?.question_type === 'hots') {
         const value = (answer.essay_answer || '').trim();
 
@@ -1885,6 +2004,8 @@ function AdminImport() {
     const [activeQuestionType, setActiveQuestionType] = useState('multiple_choice');
     const [questionClassFilter, setQuestionClassFilter] = useState('__all');
     const [busy, setBusy] = useState('');
+    const [gradingAttemptId, setGradingAttemptId] = useState(null);
+    const [gradeForm, setGradeForm] = useState({});
 
     const loadAttempts = () => api.get('/api/admin/attempts').then((data) => setAttempts(data.attempts.data));
     const loadExams = () => api.get('/api/admin/exams').then((data) => {
@@ -2103,6 +2224,40 @@ function AdminImport() {
             setMessage(data.message);
             clearQuestionForm();
             await Promise.all([loadQuestions(selectedExam.id), loadExams()]);
+        } catch (err) {
+            setMessage(err.message);
+        } finally {
+            setBusy('');
+        }
+    };
+
+    const toggleGrading = (attempt) => {
+        if (gradingAttemptId === attempt.id) {
+            setGradingAttemptId(null);
+            return;
+        }
+        const form = {};
+        (attempt.answers || []).forEach((answer) => {
+            form[answer.id] = {
+                manual_score: answer.manual_score ?? '',
+                manual_feedback: answer.manual_feedback ?? '',
+            };
+        });
+        setGradeForm(form);
+        setGradingAttemptId(attempt.id);
+    };
+
+    const saveGrade = async (answer) => {
+        const form = gradeForm[answer.id] || {};
+        setBusy(`grade-${answer.id}`);
+        setMessage('');
+        try {
+            const data = await api.post(`/api/admin/answers/${answer.id}/grade`, {
+                manual_score: form.manual_score === '' ? null : Number(form.manual_score),
+                manual_feedback: form.manual_feedback || null,
+            });
+            setMessage(data.message);
+            await loadAttempts();
         } catch (err) {
             setMessage(err.message);
         } finally {
@@ -2375,6 +2530,8 @@ function AdminImport() {
                                                 ? `Benar: ${questionKeys.filter((key) => question.correct_options?.[key]).map((key) => key.toUpperCase()).join(', ') || '-'}`
                                                 : question.question_type === 'hots'
                                                     ? `Level ${question.level || 'berat'}`
+                                                : question.question_type === 'file_upload'
+                                                    ? 'Berkas PDF'
                                                 : `Kunci ${String(question.correct_option || '-').toUpperCase()}`}
                                             {' '}| Kelas {questionClassLabel(question.class_name)}
                                         </small>
@@ -2412,20 +2569,56 @@ function AdminImport() {
                 </div>
                 <div className="table-wrap">
                     <table>
-                        <thead><tr><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th></tr></thead>
+                        <thead><tr><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th><th>Tugas</th></tr></thead>
                         <tbody>
-                            {latestAttempts.map((attempt) => (
-                                <tr key={attempt.id}>
-                                    <td>{attempt.user.name}</td>
-                                    <td>{attempt.user.nrp}</td>
-                                    <td>{attempt.exam.title}</td>
-                                    <td>{attempt.package?.code || '-'}</td>
-                                    <td><span className={`status-pill mini ${attempt.status === 'submitted' ? 'open' : attempt.status === 'in_progress' ? 'scheduled' : 'closed'}`}>{attempt.status}</span></td>
-                                    <td>{attempt.score}/{attempt.total_questions}</td>
-                                    <td>{attempt.letter_grade || '-'}</td>
-                                </tr>
-                            ))}
-                            {latestAttempts.length === 0 && <tr><td colSpan="7">Belum ada attempt mahasiswa.</td></tr>}
+                            {latestAttempts.map((attempt) => {
+                                const submissions = attempt.answers || [];
+                                const expanded = gradingAttemptId === attempt.id;
+                                return (
+                                    <React.Fragment key={attempt.id}>
+                                        <tr>
+                                            <td>{attempt.user.name}</td>
+                                            <td>{attempt.user.nrp}</td>
+                                            <td>{attempt.exam.title}</td>
+                                            <td>{attempt.package?.code || '-'}</td>
+                                            <td><span className={`status-pill mini ${attempt.status === 'submitted' ? 'open' : attempt.status === 'in_progress' ? 'scheduled' : 'closed'}`}>{attempt.status}</span></td>
+                                            <td>{attempt.score}/{attempt.total_questions}</td>
+                                            <td>{attempt.letter_grade || '-'}</td>
+                                            <td>
+                                                {submissions.length > 0
+                                                    ? <button className="btn secondary mini" onClick={() => toggleGrading(attempt)}>{expanded ? 'Tutup' : `Nilai (${submissions.length})`}</button>
+                                                    : <span className="muted">-</span>}
+                                            </td>
+                                        </tr>
+                                        {expanded && submissions.map((answer) => (
+                                            <tr key={answer.id} className="grade-row">
+                                                <td colSpan="8">
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', padding: '6px 2px' }}>
+                                                        <div style={{ flex: '1 1 240px' }}>
+                                                            <strong>{answer.question?.question_text || 'Tugas'}</strong>
+                                                            <div className="muted" style={{ marginTop: 4 }}>
+                                                                {answer.file_path
+                                                                    ? <a href={`/api/admin/answers/${answer.id}/file`} target="_blank" rel="noreferrer"><FileUp size={14} /> {answer.file_original_name || 'tugas.pdf'}{answer.file_size ? ` (${Math.round(answer.file_size / 1024)} KB)` : ''}</a>
+                                                                    : 'Belum mengumpulkan berkas.'}
+                                                            </div>
+                                                        </div>
+                                                        <div className="field" style={{ width: 110, margin: 0 }}>
+                                                            <label>Nilai (0-100)</label>
+                                                            <input type="number" min="0" max="100" step="0.01" value={gradeForm[answer.id]?.manual_score ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_score: event.target.value } })} />
+                                                        </div>
+                                                        <div className="field" style={{ flex: '1 1 200px', margin: 0 }}>
+                                                            <label>Catatan</label>
+                                                            <input value={gradeForm[answer.id]?.manual_feedback ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_feedback: event.target.value } })} />
+                                                        </div>
+                                                        <button className="btn primary mini" disabled={busy === `grade-${answer.id}`} onClick={() => saveGrade(answer)}>Simpan</button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </React.Fragment>
+                                );
+                            })}
+                            {latestAttempts.length === 0 && <tr><td colSpan="8">Belum ada attempt mahasiswa.</td></tr>}
                         </tbody>
                     </table>
                 </div>
@@ -2450,6 +2643,7 @@ function QuestionEditorCard({
 }) {
     const isTrueFalse = type === 'true_false';
     const isHots = type === 'hots';
+    const isFileUpload = type === 'file_upload';
     const meta = questionTypeMeta(type);
     const canSubmit = selectedExam && busy !== 'question';
     const editingThisType = editingQuestion && normalizeQuestionType(editingQuestion.question_type) === type;
@@ -2490,7 +2684,7 @@ function QuestionEditorCard({
                         <input value={questionForm.level} onChange={(event) => setQuestionForm({ ...questionForm, level: event.target.value, question_type: type })} placeholder="berat" />
                     </div>
                 )}
-                {!isTrueFalse && !isHots && (
+                {!isTrueFalse && !isHots && !isFileUpload && (
                     <div className="field">
                         <label>Kunci</label>
                         <select value={questionForm.correct_option} onChange={(event) => setQuestionForm({ ...questionForm, correct_option: event.target.value, question_type: type })}>
@@ -2510,12 +2704,16 @@ function QuestionEditorCard({
                 </div>
             )}
 
+            {isFileUpload && (
+                <p className="muted compact-note">Mahasiswa hanya mengunggah satu berkas <strong>PDF</strong> (maks 10 MB). Opsi A-D dan kunci tidak diperlukan. Buat ujian ini berisi 1 soal tugas saja, atur masa buka/tutup sebagai deadline, lalu nilai dari panel Attempt.</p>
+            )}
+
             <div className="field">
-                <label>{isTrueFalse ? 'Instruksi / Pertanyaan Utama' : isHots ? 'Instruksi Analisis' : 'Pertanyaan'}</label>
-                <textarea rows="4" value={questionForm.question_text} onChange={(event) => setQuestionForm({ ...questionForm, question_text: event.target.value, question_type: type })} required />
+                <label>{isTrueFalse ? 'Instruksi / Pertanyaan Utama' : isHots ? 'Instruksi Analisis' : isFileUpload ? 'Instruksi Tugas' : 'Pertanyaan'}</label>
+                <textarea rows="4" value={questionForm.question_text} onChange={(event) => setQuestionForm({ ...questionForm, question_text: event.target.value, question_type: type })} placeholder={isFileUpload ? 'Contoh: Kumpulkan laporan praktikum minggu 5 dalam format PDF.' : ''} required />
             </div>
 
-            {!isHots && questionKeys.map((option) => (
+            {!isHots && !isFileUpload && questionKeys.map((option) => (
                 <div className="field" key={option}>
                     <label>{isTrueFalse ? `Pernyataan ${option.toUpperCase()}` : `Opsi ${option.toUpperCase()}`}</label>
                     <textarea rows="2" value={questionForm[`option_${option}`]} onChange={(event) => setQuestionForm({ ...questionForm, [`option_${option}`]: event.target.value, question_type: type })} required />
@@ -2537,7 +2735,7 @@ function QuestionEditorCard({
             ))}
 
             <div className="field">
-                <label>{isHots ? 'Pedoman Jawaban' : 'Pembahasan'}</label>
+                <label>{isHots ? 'Pedoman Jawaban' : isFileUpload ? 'Catatan / Rubrik (opsional)' : 'Pembahasan'}</label>
                 <textarea rows="3" value={questionForm.explanation} onChange={(event) => setQuestionForm({ ...questionForm, explanation: event.target.value, question_type: type })} />
             </div>
 

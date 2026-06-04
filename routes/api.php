@@ -18,6 +18,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/attempts/{attempt}', [AttemptController::class, 'show']);
     Route::post('/attempts/{attempt}/answer', [AttemptController::class, 'answer'])->middleware('role:student');
+    Route::post('/attempts/{attempt}/upload', [AttemptController::class, 'uploadFile'])->middleware('role:student');
     Route::post('/attempts/{attempt}/proctor-event', [AttemptController::class, 'proctorEvent'])->middleware('role:student');
     Route::post('/attempts/{attempt}/submit', [AttemptController::class, 'submit']);
     Route::get('/attempts/{attempt}/result', [AttemptController::class, 'result']);
@@ -44,6 +45,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/admin/exams/{exam}/questions/{question}', [AdminController::class, 'destroyQuestion']);
         Route::post('/admin/questions/import', [AdminController::class, 'importQuestions']);
         Route::get('/admin/attempts', [AdminController::class, 'attempts']);
+        Route::get('/admin/attempts/{attempt}/answers', [AdminController::class, 'attemptAnswers']);
+        Route::get('/admin/answers/{answer}/file', [AdminController::class, 'downloadAnswerFile']);
+        Route::post('/admin/answers/{answer}/grade', [AdminController::class, 'gradeAnswer']);
         Route::get('/admin/reports/results', [AdminController::class, 'report']);
     });
 });

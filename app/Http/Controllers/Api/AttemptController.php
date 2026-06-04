@@ -8,6 +8,7 @@ use App\Models\AttemptAnswer;
 use App\Models\GradeScale;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class AttemptController extends Controller
@@ -90,6 +91,51 @@ class AttemptController extends Controller
                 'answered_at' => now(),
             ]);
         }
+
+        return response()->json(['answer' => $answer]);
+    }
+
+    public function uploadFile(Request $request, Attempt $attempt)
+    {
+        $this->authorizeAttempt($request, $attempt);
+        $this->expireIfNeeded($attempt);
+
+        if ($attempt->status !== 'in_progress' || now()->greaterThan($attempt->ends_at)) {
+            $this->expireIfNeeded($attempt, true);
+
+            return response()->json(['message' => 'Masa pengumpulan tugas sudah berakhir.'], 422);
+        }
+
+        $data = $request->validate([
+            'question_id' => ['required', 'integer', Rule::exists('questions', 'id')->where('exam_id', $attempt->exam_id)],
+            'file' => ['required', 'file', 'mimetypes:application/pdf', 'mimes:pdf', 'max:10240'],
+        ], [], ['file' => 'berkas tugas']);
+
+        $answer = AttemptAnswer::where('attempt_id', $attempt->id)
+            ->where('question_id', $data['question_id'])
+            ->with('question')
+            ->firstOrFail();
+
+        if (($answer->question->question_type ?? 'multiple_choice') !== 'file_upload') {
+            return response()->json(['message' => 'Soal ini bukan tipe upload tugas.'], 422);
+        }
+
+        if ($answer->file_path) {
+            Storage::disk('local')->delete($answer->file_path);
+        }
+
+        $file = $request->file('file');
+        $path = $file->store("tugas/{$attempt->id}", 'local');
+
+        $answer->update([
+            'selected_option' => null,
+            'selected_options' => null,
+            'essay_answer' => null,
+            'file_path' => $path,
+            'file_original_name' => $file->getClientOriginalName(),
+            'file_size' => $file->getSize(),
+            'answered_at' => now(),
+        ]);
 
         return response()->json(['answer' => $answer]);
     }
@@ -292,7 +338,7 @@ class AttemptController extends Controller
     private function answerIsCorrect(AttemptAnswer $answer): ?bool
     {
         $questionType = $answer->question->question_type ?? 'multiple_choice';
-        if ($questionType === 'hots') {
+        if ($questionType === 'hots' || $questionType === 'file_upload') {
             return null;
         }
 

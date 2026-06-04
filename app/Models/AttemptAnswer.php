@@ -13,6 +13,12 @@ class AttemptAnswer extends Model
         'selected_option',
         'selected_options',
         'essay_answer',
+        'file_path',
+        'file_original_name',
+        'file_size',
+        'manual_score',
+        'manual_feedback',
+        'graded_at',
         'is_correct',
         'answered_at',
     ];
@@ -23,6 +29,9 @@ class AttemptAnswer extends Model
             'is_correct' => 'boolean',
             'selected_options' => 'array',
             'answered_at' => 'datetime',
+            'graded_at' => 'datetime',
+            'manual_score' => 'float',
+            'file_size' => 'integer',
             'display_order' => 'integer',
         ];
     }

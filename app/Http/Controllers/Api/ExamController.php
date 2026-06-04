@@ -121,10 +121,18 @@ class ExamController extends Controller
             ], 409);
         }
 
-        $attempt = DB::transaction(function () use ($request, $exam, $package, $questions) {
+        // Ujian tugas (semua soal tipe file_upload) memakai batas waktu dari
+        // jadwal closes_at, bukan durasi pengerjaan, agar santai sampai deadline.
+        $isAssignment = $questions->every(fn ($question) => ($question->question_type ?? 'multiple_choice') === 'file_upload');
+
+        $attempt = DB::transaction(function () use ($request, $exam, $package, $questions, $isAssignment) {
             $startedAt = now();
             $shufflePattern = $this->shufflePatternForStudent($exam->id, $request->user()->id);
             $orderedQuestions = $this->orderedQuestionIdsForAttempt($questions, $exam->id, $request->user()->id, $package?->id, $shufflePattern);
+
+            $endsAt = $isAssignment && $exam->closes_at
+                ? $exam->closes_at->copy()
+                : $startedAt->copy()->addMinutes($exam->duration_minutes);
 
             $attempt = Attempt::create([
                 'exam_id' => $exam->id,
@@ -132,7 +140,7 @@ class ExamController extends Controller
                 'shuffle_pattern' => $shufflePattern,
                 'user_id' => $request->user()->id,
                 'started_at' => $startedAt,
-                'ends_at' => $startedAt->copy()->addMinutes($exam->duration_minutes),
+                'ends_at' => $endsAt,
                 'status' => 'in_progress',
                 'score' => 0,
                 'total_questions' => count($orderedQuestions),
