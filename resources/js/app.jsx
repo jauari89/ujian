@@ -1996,6 +1996,7 @@ function AdminGrading() {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [onlyPending, setOnlyPending] = useState(false);
+    const [examFilter, setExamFilter] = useState('');
 
     const loadAttempts = () => api.get('/api/admin/attempts')
         .then((data) => setAttempts(data.attempts.data))
@@ -2040,8 +2041,12 @@ function AdminGrading() {
     };
 
     // Hanya attempt yang punya jawaban perlu koreksi (HOTS / tugas PDF).
-    const gradable = attempts
-        .filter((attempt) => (attempt.answers || []).length > 0)
+    const withSubmissions = attempts.filter((attempt) => (attempt.answers || []).length > 0);
+    const examOptions = [...new Map(withSubmissions.map((attempt) => [attempt.exam?.id, attempt.exam])).values()]
+        .filter(Boolean)
+        .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    const gradable = withSubmissions
+        .filter((attempt) => ! examFilter || String(attempt.exam?.id) === examFilter)
         .filter((attempt) => ! onlyPending || (attempt.answers || []).some((answer) => answer.manual_score == null));
     const pendingCount = attempts.reduce((total, attempt) => total
         + (attempt.answers || []).filter((answer) => answer.manual_score == null).length, 0);
@@ -2070,22 +2075,32 @@ function AdminGrading() {
                         <h2>Daftar Koreksi</h2>
                         <p className="muted">Klik <strong>Nilai</strong> untuk membaca jawaban dan memberi skor. Hingga 50 attempt terakhir.</p>
                     </div>
-                    <label className="check-row compact" style={{ margin: 0 }}>
-                        <input type="checkbox" checked={onlyPending} onChange={(event) => setOnlyPending(event.target.checked)} />
-                        Hanya yang belum dinilai
-                    </label>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div className="field" style={{ margin: 0, minWidth: 200 }}>
+                            <label>Ujian</label>
+                            <select value={examFilter} onChange={(event) => { setExamFilter(event.target.value); setGradingAttemptId(null); }}>
+                                <option value="">Semua ujian</option>
+                                {examOptions.map((exam) => <option key={exam.id} value={exam.id}>{exam.title}</option>)}
+                            </select>
+                        </div>
+                        <label className="check-row compact" style={{ margin: 0 }}>
+                            <input type="checkbox" checked={onlyPending} onChange={(event) => setOnlyPending(event.target.checked)} />
+                            Hanya yang belum dinilai
+                        </label>
+                    </div>
                 </div>
                 <div className="table-wrap">
                     <table>
-                        <thead><tr><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th><th>Koreksi</th></tr></thead>
+                        <thead><tr><th>#</th><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th><th>Koreksi</th></tr></thead>
                         <tbody>
-                            {gradable.map((attempt) => {
+                            {gradable.map((attempt, rowIndex) => {
                                 const submissions = attempt.answers || [];
                                 const expanded = gradingAttemptId === attempt.id;
                                 const pending = submissions.filter((answer) => answer.manual_score == null).length;
                                 return (
                                     <React.Fragment key={attempt.id}>
                                         <tr>
+                                            <td>{rowIndex + 1}</td>
                                             <td>{attempt.user.name}</td>
                                             <td>{attempt.user.nrp}</td>
                                             <td>{attempt.exam.title}</td>
@@ -2102,7 +2117,7 @@ function AdminGrading() {
                                         </tr>
                                         {expanded && submissions.map((answer) => (
                                             <tr key={answer.id} className="grade-row">
-                                                <td colSpan="8">
+                                                <td colSpan="9">
                                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', padding: '6px 2px' }}>
                                                         <div style={{ flex: '1 1 320px' }}>
                                                             <span className="badge">{questionTypeLabel(answer.question?.question_type)}</span> <strong>{answer.question?.question_text || '-'}</strong>
@@ -2134,7 +2149,7 @@ function AdminGrading() {
                                     </React.Fragment>
                                 );
                             })}
-                            {gradable.length === 0 && <tr><td colSpan="8">{onlyPending ? 'Tidak ada jawaban yang belum dinilai.' : 'Belum ada jawaban HOTS atau tugas untuk dikoreksi.'}</td></tr>}
+                            {gradable.length === 0 && <tr><td colSpan="9">{onlyPending ? 'Tidak ada jawaban yang belum dinilai.' : 'Belum ada jawaban HOTS atau tugas untuk dikoreksi.'}</td></tr>}
                         </tbody>
                     </table>
                 </div>
