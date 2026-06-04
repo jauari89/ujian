@@ -2025,7 +2025,7 @@ function AdminImport() {
     const totalQuestions = exams.reduce((total, exam) => total + Number(exam.questions_count || 0), 0);
     const openExams = exams.filter((exam) => exam.is_open_now).length;
     const totalAttempts = exams.reduce((total, exam) => total + Number(exam.attempts_count || 0), 0);
-    const latestAttempts = attempts.slice(0, 12);
+    const latestAttempts = attempts.slice(0, 50);
     const editingQuestion = questions.find((question) => question.id === editingQuestionId);
     const activeQuestionClass = questionClassFilter === '__all' ? '' : questionClassFilter;
     const classFilteredQuestions = questions.filter((question) => questionClassFilter === '__all' || (question.class_name || '') === questionClassFilter);
@@ -2562,14 +2562,14 @@ function AdminImport() {
             <section className="panel">
                 <div className="section-head">
                     <div>
-                        <h2>Attempt Terbaru</h2>
-                        <p className="muted">Menampilkan 12 attempt terakhir dari mahasiswa.</p>
+                        <h2>Attempt &amp; Koreksi</h2>
+                        <p className="muted">Hingga 50 attempt terakhir. Kolom <strong>Koreksi</strong> untuk menilai esai HOTS &amp; tugas PDF — nilai akhir otomatis digabung dengan skor PG/TF.</p>
                     </div>
                     <button className="btn secondary" onClick={loadAttempts}>Refresh</button>
                 </div>
                 <div className="table-wrap">
                     <table>
-                        <thead><tr><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th><th>Tugas</th></tr></thead>
+                        <thead><tr><th>Nama</th><th>NRP</th><th>Ujian</th><th>Paket</th><th>Status</th><th>Skor</th><th>Grade</th><th>Koreksi</th></tr></thead>
                         <tbody>
                             {latestAttempts.map((attempt) => {
                                 const submissions = attempt.answers || [];
@@ -2594,13 +2594,19 @@ function AdminImport() {
                                             <tr key={answer.id} className="grade-row">
                                                 <td colSpan="8">
                                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', padding: '6px 2px' }}>
-                                                        <div style={{ flex: '1 1 240px' }}>
-                                                            <strong>{answer.question?.question_text || 'Tugas'}</strong>
-                                                            <div className="muted" style={{ marginTop: 4 }}>
-                                                                {answer.file_path
-                                                                    ? <a href={`/api/admin/answers/${answer.id}/file`} target="_blank" rel="noreferrer"><FileUp size={14} /> {answer.file_original_name || 'tugas.pdf'}{answer.file_size ? ` (${Math.round(answer.file_size / 1024)} KB)` : ''}</a>
-                                                                    : 'Belum mengumpulkan berkas.'}
-                                                            </div>
+                                                        <div style={{ flex: '1 1 320px' }}>
+                                                            <span className="badge">{questionTypeLabel(answer.question?.question_type)}</span> <strong>{answer.question?.question_text || '-'}</strong>
+                                                            {answer.question?.question_type === 'hots' ? (
+                                                                <div className="muted" style={{ marginTop: 6, whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto', background: 'var(--surface-2, #f8fafc)', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: 10 }}>
+                                                                    {(answer.essay_answer || '').trim() || 'Belum dijawab mahasiswa.'}
+                                                                </div>
+                                                            ) : (
+                                                                <div className="muted" style={{ marginTop: 4 }}>
+                                                                    {answer.file_path
+                                                                        ? <a href={`/api/admin/answers/${answer.id}/file`} target="_blank" rel="noreferrer"><FileUp size={14} /> {answer.file_original_name || 'tugas.pdf'}{answer.file_size ? ` (${Math.round(answer.file_size / 1024)} KB)` : ''}</a>
+                                                                        : 'Belum mengumpulkan berkas.'}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <div className="field" style={{ width: 110, margin: 0 }}>
                                                             <label>Nilai (0-100)</label>

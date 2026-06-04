@@ -114,7 +114,7 @@ class AdminController extends Controller
                 'exam.course:id,name,slug',
                 'package:id,name,code',
                 'answers' => fn ($answers) => $answers
-                    ->whereHas('question', fn ($question) => $question->where('question_type', 'file_upload'))
+                    ->whereHas('question', fn ($question) => $question->whereIn('question_type', ['file_upload', 'hots']))
                     ->with('question:id,question_type,question_text,week'),
             ])
                 ->latest('id')
@@ -123,7 +123,8 @@ class AdminController extends Controller
     }
 
     /**
-     * Berkas tugas (PDF) yang dikumpulkan pada satu attempt, untuk dinilai dosen.
+     * Jawaban yang perlu koreksi manual pada satu attempt (esai HOTS + tugas PDF),
+     * untuk dinilai dosen.
      */
     public function attemptAnswers(Attempt $attempt)
     {
@@ -161,31 +162,31 @@ class AdminController extends Controller
         $this->recomputeManualGrade($answer->attempt);
 
         return response()->json([
-            'message' => 'Nilai tugas tersimpan.',
+            'message' => 'Nilai tersimpan.',
             'answer' => $answer->fresh(),
         ]);
     }
 
     /**
-     * Hitung ulang nilai attempt dari rata-rata nilai manual (tugas/HOTS) yang
-     * sudah dinilai dosen, lalu petakan ke skala grade mata kuliah.
+     * Hitung ulang nilai akhir attempt secara GABUNGAN: PG/TF otomatis +
+     * HOTS/tugas manual (lihat Attempt::combinedScore), lalu petakan ke skala
+     * grade mata kuliah. Dipanggil tiap dosen menyimpan nilai manual.
      */
     private function recomputeManualGrade(Attempt $attempt): void
     {
         $attempt->loadMissing('answers', 'exam.course');
 
-        $scores = $attempt->answers
-            ->whereNotNull('manual_score')
-            ->pluck('manual_score');
+        [$earned, $total, $percentage] = $attempt->combinedScore();
 
-        if ($scores->isEmpty()) {
+        if ($total === 0) {
             return;
         }
 
-        $percentage = round((float) $scores->avg(), 2);
         $grade = $this->gradeForCourse($attempt->exam?->course, $percentage);
 
         $attempt->update([
+            'score' => (int) round($earned),
+            'total_questions' => $total,
             'percentage' => $percentage,
             'letter_grade' => $grade?->letter_grade,
             'numeric_grade' => $grade?->numeric_grade,

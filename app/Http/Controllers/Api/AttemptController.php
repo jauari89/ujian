@@ -287,31 +287,25 @@ class AttemptController extends Controller
     {
         $attempt->load('answers.question', 'exam.course');
 
-        $score = 0;
-        $scoredTotal = 0;
+        // Nilai gabungan: tiap soal = 1 poin. PG/TF otomatis (benar=1/salah=0),
+        // HOTS/tugas dinilai manual (manual_score/100 poin). Yang belum dinilai
+        // berkontribusi 0 (pending) sampai dosen mengoreksi.
         foreach ($attempt->answers as $answer) {
-            $isCorrect = $this->answerIsCorrect($answer);
-            $answer->update(['is_correct' => $isCorrect]);
-            if ($isCorrect !== null) {
-                $scoredTotal++;
-                $score += $isCorrect ? 1 : 0;
-            }
+            $answer->update(['is_correct' => $this->answerIsCorrect($answer)]);
         }
 
-        $percentage = $scoredTotal > 0
-            ? round(($score / $scoredTotal) * 100, 2)
-            : 0;
+        [$earned, $total, $percentage] = $attempt->combinedScore();
         $grade = $this->gradeFor($attempt, $percentage);
 
         $attempt->update([
             'submitted_at' => $attempt->submitted_at ?? now(),
             'status' => now()->greaterThan($attempt->ends_at) ? 'expired' : 'submitted',
-            'score' => $score,
+            'score' => (int) round($earned),
             'percentage' => $percentage,
             'letter_grade' => $grade?->letter_grade,
             'numeric_grade' => $grade?->numeric_grade,
             'grade_category' => $grade?->category,
-            'total_questions' => $scoredTotal ?: $attempt->answers->count(),
+            'total_questions' => $total,
         ]);
 
         return $attempt->refresh();
