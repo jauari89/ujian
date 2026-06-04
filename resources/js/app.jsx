@@ -1208,26 +1208,53 @@ function ResultPage() {
     if (error) return <div className="alert error">{error}</div>;
     if (!data) return <div>Memuat hasil...</div>;
 
+    const answers = data.attempt.answers || [];
+    const groups = [
+        { key: 'multiple_choice', label: 'Pilihan Ganda (ABCD)', match: (type) => ! ['true_false', 'hots', 'file_upload'].includes(type) },
+        { key: 'true_false', label: 'True / False', match: (type) => type === 'true_false' },
+        { key: 'hots', label: 'HOTS (Esai)', match: (type) => type === 'hots' },
+        { key: 'file_upload', label: 'Tugas (PDF)', match: (type) => type === 'file_upload' },
+    ]
+        .map((group) => ({ ...group, items: answers.filter((answer) => group.match(answer.question?.question_type)) }))
+        .filter((group) => group.items.length > 0);
+
+    const statusCell = (answer) => ['hots', 'file_upload'].includes(answer.question?.question_type)
+        ? (answer.manual_score != null ? `Nilai ${answer.manual_score}` : 'Perlu review')
+        : answer.is_correct ? 'Benar' : 'Salah';
+
     return (
         <div className="panel">
             <h1>Hasil {data.attempt.exam.title}</h1>
             <p>Skor: <strong>{data.attempt.score}</strong> dari <strong>{data.attempt.total_questions}</strong> ({data.percentage}%).</p>
             <p>Grade: <strong>{data.grade?.letter || data.attempt.letter_grade || '-'}</strong>{data.grade?.category ? ` - ${data.grade.category}` : ''}</p>
             <p>Paket: <strong>{data.attempt.package?.code || '-'}</strong> | Pola acak: <strong>{data.attempt.shuffle_pattern || '-'}/10</strong></p>
-            <div className="table-wrap">
-                <table>
-                    <thead><tr><th>No</th><th>Jawaban</th><th>Status</th></tr></thead>
-                    <tbody>
-                        {data.attempt.answers.map((answer, index) => (
-                            <tr key={answer.id}>
-                                <td>{index + 1}</td>
-                                <td>{answerDisplay(answer)}</td>
-                                <td>{['hots', 'file_upload'].includes(answer.question?.question_type) ? (answer.manual_score != null ? `Nilai ${answer.manual_score}` : 'Perlu review') : answer.is_correct ? 'Benar' : 'Salah'}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+
+            {groups.map((group) => {
+                const autoType = ! ['hots', 'file_upload'].includes(group.key);
+                const benar = group.items.filter((answer) => answer.is_correct).length;
+                return (
+                    <div key={group.key} style={{ marginTop: 20 }}>
+                        <h3 style={{ marginBottom: 8 }}>
+                            {group.label} <span className="muted" style={{ fontWeight: 400 }}>({group.items.length} soal{autoType ? ` · ${benar} benar` : ''})</span>
+                        </h3>
+                        <div className="table-wrap">
+                            <table>
+                                <thead><tr><th style={{ width: 48 }}>No</th><th>Soal</th><th>Jawaban</th><th style={{ width: 110 }}>Status</th></tr></thead>
+                                <tbody>
+                                    {group.items.map((answer, index) => (
+                                        <tr key={answer.id}>
+                                            <td>{index + 1}</td>
+                                            <td>{answer.question?.question_text || '-'}</td>
+                                            <td>{answerDisplay(answer)}</td>
+                                            <td>{statusCell(answer)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            })}
         </div>
     );
 }
