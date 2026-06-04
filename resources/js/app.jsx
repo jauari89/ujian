@@ -1754,8 +1754,8 @@ function AdminReport() {
                                     {sortedStudentResults.map((attempt, index) => (
                                         <tr key={attempt.id}>
                                             <td>{index + 1}</td>
-                                            <td>{attempt.student?.name || '-'}</td>
-                                            <td>{attempt.student?.nrp || '-'}</td>
+                                            <td className="name-cell">{(attempt.student?.name || '').trim() || '-'}</td>
+                                            <td>{(attempt.student?.nrp || '').trim() || '-'}</td>
                                             <td>{attempt.student?.class_name || '-'}</td>
                                             <td>{attempt.course || '-'}</td>
                                             <td>{attempt.exam || '-'}</td>
@@ -1865,9 +1865,9 @@ function AdminReport() {
                                     {sortedNotAttempted.map((student, index) => (
                                         <tr key={student.id}>
                                             <td>{index + 1}</td>
-                                            <td>{student.name || '-'}</td>
-                                            <td>{student.nrp || '-'}</td>
-                                            <td>{student.class_name || '-'}</td>
+                                            <td className="name-cell">{(student.name || '').trim() || '-'}</td>
+                                            <td>{(student.nrp || '').trim() || '-'}</td>
+                                            <td>{(student.class_name || '').trim() || '-'}</td>
                                             <td>
                                                 {student.has_logged_in
                                                     ? <span className="badge">Sudah login</span>
