@@ -24,7 +24,9 @@ class ExamController extends Controller
             ->where(fn ($exams) => $exams
                 ->whereNull('class_name')
                 ->when($className, fn ($exams) => $exams->orWhere('class_name', $className)))
-            ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
+            // Termasuk ujian terjadwal yang BELUM dibuka (opens_at di masa depan)
+            // agar peserta yang masuk lebih awal melihat countdown menuju mulai.
+            // Yang sudah lewat closes_at tetap disembunyikan.
             ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()));
 
         $allowed = $this->allowedCourseSlugs($className);
@@ -171,7 +173,8 @@ class ExamController extends Controller
                 ->where(fn ($exams) => $exams
                     ->whereNull('class_name')
                     ->when($request->user()->class_name, fn ($exams, $className) => $exams->orWhere('class_name', $className)))
-                ->where(fn ($window) => $window->whereNull('opens_at')->orWhere('opens_at', '<=', now()))
+                // Ikutkan ujian terjadwal yang belum dibuka agar mata kuliah tetap
+                // tampil di daftar dan peserta bisa masuk untuk melihat countdown.
                 ->where(fn ($window) => $window->whereNull('closes_at')->orWhere('closes_at', '>=', now()))])
                 ->where('is_active', true)
                 ->when($allowed !== null, fn ($query) => $query->whereIn('slug', $allowed))

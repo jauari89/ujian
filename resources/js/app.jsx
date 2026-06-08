@@ -458,10 +458,30 @@ function CourseSelect({ user }) {
     );
 }
 
+function ExamCountdown({ opensAt, remainingMs }) {
+    const total = Math.max(0, remainingMs);
+    const pad = (n) => String(n).padStart(2, '0');
+    const days = Math.floor(total / 86400000);
+    const hours = Math.floor((total % 86400000) / 3600000);
+    const minutes = Math.floor((total % 3600000) / 60000);
+    const seconds = Math.floor((total % 60000) / 1000);
+
+    return (
+        <div className="exam-countdown">
+            <span className="exam-countdown__label">Ujian dibuka dalam</span>
+            <span className="exam-countdown__timer">
+                {days > 0 && `${days} hari `}{pad(hours)}:{pad(minutes)}:{pad(seconds)}
+            </span>
+            <span className="exam-countdown__meta">Mulai: {formatDateTime(opensAt)}</span>
+        </div>
+    );
+}
+
 function ExamHome() {
     const [data, setData] = useState(null);
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
+    const [now, setNow] = useState(Date.now());
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const courseSlug = searchParams.get('course_slug');
@@ -472,6 +492,12 @@ function ExamHome() {
         setError('');
         api.get(`/api/exams/active?course_slug=${encodeURIComponent(courseSlug)}`).then(setData).catch((err) => setError(err.message));
     }, [courseSlug]);
+
+    // Detak per detik untuk countdown menuju jam mulai ujian terjadwal.
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, []);
 
     if (!courseSlug) return <Navigate to="/courses" />;
 
@@ -514,6 +540,8 @@ function ExamHome() {
                     {examItems.map((examItem) => {
                         const hasQuestions = examItem.question_count > 0;
                         const submitted = examItem.attempt && examItem.attempt.status !== 'in_progress';
+                        const opensAtMs = examItem.opens_at ? new Date(examItem.opens_at).getTime() : null;
+                        const notYetOpen = opensAtMs !== null && !Number.isNaN(opensAtMs) && now < opensAtMs;
 
                         return (
                             <article className="exam-choice-card" key={examItem.id}>
@@ -522,15 +550,17 @@ function ExamHome() {
                                     <p className="muted">Durasi {examItem.duration_minutes} menit sejak Start ditekan.</p>
                                 </div>
                                 {!hasQuestions && <div className="alert">Soal belum diimport untuk kelas ini.</div>}
+                                {notYetOpen && <ExamCountdown opensAt={examItem.opens_at} remainingMs={opensAtMs - now} />}
                                 <div className="exam-choice-stats">
                                     <div className="stat-row"><span>Jumlah soal</span><strong>{examItem.question_count}</strong></div>
-                                    <div className="stat-row"><span>Status</span><strong>{examItem.attempt?.status || 'belum mulai'}</strong></div>
+                                    <div className="stat-row"><span>Status</span><strong>{notYetOpen ? 'belum dibuka' : (examItem.attempt?.status || 'belum mulai')}</strong></div>
                                     <div className="stat-row"><span>Paket</span><strong>{examItem.package_count || 0}</strong></div>
                                 </div>
                                 <div className="action-row">
                                     {examItem.attempt && !submitted && <button className="btn primary" onClick={() => navigate(`/attempt/${examItem.attempt.id}`)}>Lanjutkan Attempt</button>}
                                     {submitted && <button className="btn primary" onClick={() => navigate(`/result/${examItem.attempt.id}`)}>Lihat Hasil</button>}
-                                    {!examItem.attempt && <button className="btn primary" disabled={!hasQuestions || busy === examItem.id} onClick={() => start(examItem)}>{busy === examItem.id ? 'Start...' : 'Start'}</button>}
+                                    {!examItem.attempt && notYetOpen && <button className="btn primary" disabled>Belum dibuka</button>}
+                                    {!examItem.attempt && !notYetOpen && <button className="btn primary" disabled={!hasQuestions || busy === examItem.id} onClick={() => start(examItem)}>{busy === examItem.id ? 'Start...' : 'Start'}</button>}
                                 </div>
                             </article>
                         );

@@ -278,6 +278,39 @@ h3 {
     gap: 2px;
 }
 
+.exam-countdown {
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    padding: 16px 12px;
+    border: 1px solid var(--primary-ring);
+    border-radius: var(--r-md);
+    background: var(--primary-soft);
+    text-align: center;
+}
+
+.exam-countdown__label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--primary-hover);
+}
+
+.exam-countdown__timer {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    font-size: clamp(28px, 6vw, 40px);
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--primary);
+}
+
+.exam-countdown__meta {
+    font-size: 13px;
+    color: var(--muted);
+}
+
 .panel {
     padding: clamp(18px, 4vw, 30px);
 }
