@@ -149,9 +149,10 @@ class AttemptController extends Controller
         }
 
         $data = $request->validate([
-            'type' => ['required', Rule::in(['camera_absence_warning', 'camera_absence_violation'])],
+            'type' => ['required', Rule::in(['camera_absence_warning', 'camera_absence_violation', 'tab_switch_warning'])],
             'message' => ['nullable', 'string', 'max:255'],
             'absence_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
+            'tab_switch_count' => ['nullable', 'integer', 'min:1', 'max:10000'],
             'warning_count' => ['required', 'integer', 'min:0', 'max:255'],
         ]);
 
@@ -160,6 +161,7 @@ class AttemptController extends Controller
                 'type' => $data['type'],
                 'message' => $data['message'] ?? null,
                 'absence_seconds' => $data['absence_seconds'] ?? null,
+                'tab_switch_count' => $data['tab_switch_count'] ?? null,
                 'warning_count' => $data['warning_count'],
                 'recorded_at' => now()->toISOString(),
             ])

@@ -303,7 +303,13 @@ class AdminController extends Controller
             'class_name' => ['nullable', 'string', 'max:100'],
         ]);
 
-        $attemptQuery = Attempt::with(['user:id,nrp,name,email,class_name', 'exam:id,course_id,title', 'exam.course:id,name,slug', 'package:id,name,code'])
+        $attemptQuery = Attempt::with([
+            'user:id,nrp,name,email,class_name',
+            'exam:id,course_id,title',
+            'exam.course:id,name,slug',
+            'package:id,name,code',
+            'answers.question:id,question_type',
+        ])
             ->when($filters['exam_id'] ?? null, fn ($query, $examId) => $query->where('exam_id', $examId))
             ->when($filters['course_id'] ?? null, fn ($query, $courseId) => $query->whereHas('exam', fn ($exam) => $exam->where('course_id', $courseId)))
             ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->whereHas('user', fn ($user) => $user->where('class_name', $className)))
@@ -371,6 +377,7 @@ class AdminController extends Controller
                 'score' => $attempt->score,
                 'total_questions' => $attempt->total_questions,
                 'percentage' => $attempt->percentage,
+                'category_scores' => $this->categoryScores($attempt),
                 'letter_grade' => $attempt->letter_grade,
                 'proctor_warnings' => $attempt->proctor_warnings,
                 'proctor_violation' => $attempt->proctor_violation,
@@ -1035,6 +1042,74 @@ class AdminController extends Controller
         }
 
         return null;
+    }
+
+    private function categoryScores(Attempt $attempt): array
+    {
+        $categories = [
+            'multiple_choice' => ['label' => 'ABCD', 'earned' => 0.0, 'total' => 0, 'pending' => 0],
+            'true_false' => ['label' => 'T/F', 'earned' => 0.0, 'total' => 0, 'pending' => 0],
+            'hots' => ['label' => 'HOTS', 'earned' => 0.0, 'total' => 0, 'pending' => 0],
+            'file_upload' => ['label' => 'Tugas', 'earned' => 0.0, 'total' => 0, 'pending' => 0],
+        ];
+
+        foreach ($attempt->answers as $answer) {
+            $type = $answer->question?->question_type ?? 'multiple_choice';
+            if (! array_key_exists($type, $categories)) {
+                $type = 'multiple_choice';
+            }
+
+            $categories[$type]['total']++;
+            if ($answer->is_correct !== null) {
+                $categories[$type]['earned'] += $answer->is_correct ? 1.0 : 0.0;
+            } elseif ($answer->manual_score !== null) {
+                $categories[$type]['earned'] += max(0.0, min(100.0, (float) $answer->manual_score)) / 100;
+            } else {
+                $categories[$type]['pending']++;
+            }
+        }
+
+        $format = function (array $category): array {
+            $percentage = $category['total'] > 0
+                ? round(($category['earned'] / $category['total']) * 100, 2)
+                : null;
+
+            return [
+                'label' => $category['label'],
+                'earned' => round($category['earned'], 2),
+                'total' => $category['total'],
+                'percentage' => $percentage,
+                'pending' => $category['pending'],
+            ];
+        };
+
+        $scores = collect($categories)->map($format)->all();
+
+        $scores['auto'] = $this->mergeCategoryScores('ABCD + T/F', [
+            $categories['multiple_choice'],
+            $categories['true_false'],
+        ]);
+        $scores['manual'] = $this->mergeCategoryScores('HOTS/Tugas', [
+            $categories['hots'],
+            $categories['file_upload'],
+        ]);
+
+        return $scores;
+    }
+
+    private function mergeCategoryScores(string $label, array $categories): array
+    {
+        $earned = collect($categories)->sum('earned');
+        $total = collect($categories)->sum('total');
+        $pending = collect($categories)->sum('pending');
+
+        return [
+            'label' => $label,
+            'earned' => round($earned, 2),
+            'total' => $total,
+            'percentage' => $total > 0 ? round(($earned / $total) * 100, 2) : null,
+            'pending' => $pending,
+        ];
     }
 
     private function questionAnalysis(Exam $exam, array $attemptIds, ?string $className = null): array

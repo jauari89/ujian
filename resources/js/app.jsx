@@ -57,6 +57,7 @@ const api = {
 
 const PROCTOR_ABSENCE_LIMIT_SECONDS = 10;
 const PROCTOR_WARNING_LIMIT = 5;
+const PROCTOR_TAB_SWITCH_DEBOUNCE_MS = 1000;
 const PROCTOR_DETECTION_INTERVAL_MS = 2000;
 const MEDIAPIPE_WASM_PATH = '/vendor/mediapipe/wasm';
 const MEDIAPIPE_FACE_MODEL_PATH = '/vendor/mediapipe/models/blaze_face_short_range.tflite';
@@ -88,6 +89,7 @@ function App() {
                     <Route path="/admin/students" element={<Private user={user} role="admin"><AdminStudents /></Private>} />
                     <Route path="/admin/report" element={<Private user={user} role="admin"><AdminReport /></Private>} />
                     <Route path="/admin/import" element={<Private user={user} role="admin"><AdminImport /></Private>} />
+                    <Route path="/admin/exams" element={<Private user={user} role="admin"><AdminImport title="UJIAN" subtitle="CRUD ujian, masa akses, status buka/tutup, reset attempt, dan pengelolaan soal." /></Private>} />
                     <Route path="*" element={<Navigate to={user ? (user.role === 'admin' ? '/admin/import' : '/courses') : '/login'} />} />
                 </Routes>
             </Shell>
@@ -126,6 +128,7 @@ function AdminNav() {
     const location = useLocation();
     const items = [
         { to: '/admin/import', label: 'Console', icon: LayoutDashboard },
+        { to: '/admin/exams', label: 'UJIAN', icon: CalendarClock },
         { to: '/admin/grading', label: 'Nilai', icon: Pencil },
         { to: '/admin/master', label: 'Master Data', icon: Database },
         { to: '/admin/students', label: 'Mahasiswa', icon: Users },
@@ -548,6 +551,9 @@ function AttemptPage() {
     const absenceStartedAtRef = useRef(null);
     const warningSlotRef = useRef(0);
     const warningCountRef = useRef(0);
+    const tabSwitchCountRef = useRef(0);
+    const pageAwayRef = useRef(false);
+    const lastTabSwitchAtRef = useRef(0);
     const violationRef = useRef(false);
     const [attempt, setAttempt] = useState(null);
     const [current, setCurrent] = useState(0);
@@ -563,6 +569,7 @@ function AttemptPage() {
         personPresent: null,
         absenceSeconds: 0,
         warningCount: 0,
+        tabSwitchCount: 0,
         violation: false,
         message: 'Rule person menunggu kamera aktif.',
     });
@@ -585,13 +592,14 @@ function AttemptPage() {
         }));
     };
 
-    const recordProctorEvent = async (type, absenceSeconds, warningCount, message) => {
+    const recordProctorEvent = async (type, absenceSeconds, warningCount, message, extra = {}) => {
         try {
             const data = await api.post(`/api/attempts/${id}/proctor-event`, {
                 type,
                 absence_seconds: absenceSeconds,
                 warning_count: warningCount,
                 message,
+                ...extra,
             });
             setAttempt((currentAttempt) => currentAttempt
                 ? {
@@ -679,6 +687,7 @@ function AttemptPage() {
         setProctorState((current) => ({
             ...current,
             warningCount: warningCountRef.current,
+            tabSwitchCount: tabSwitchCountRef.current,
             violation: violationRef.current,
         }));
     }, [attempt?.id, attempt?.proctor_warnings, attempt?.proctor_violation]);
@@ -720,6 +729,54 @@ function AttemptPage() {
         }));
         return false;
     };
+
+    useEffect(() => {
+        if (attempt?.status !== 'in_progress' || isAssignment) {
+            pageAwayRef.current = false;
+            return undefined;
+        }
+
+        const recordTabSwitch = () => {
+            if (pageAwayRef.current) return;
+
+            const recordedAt = Date.now();
+            if (recordedAt - lastTabSwitchAtRef.current < PROCTOR_TAB_SWITCH_DEBOUNCE_MS) return;
+
+            pageAwayRef.current = true;
+            lastTabSwitchAtRef.current = recordedAt;
+            tabSwitchCountRef.current += 1;
+            warningCountRef.current += 1;
+
+            const message = `Peringatan pindah tab ${tabSwitchCountRef.current}: halaman ujian kehilangan fokus.`;
+            setProctorState((current) => ({
+                ...current,
+                warningCount: warningCountRef.current,
+                tabSwitchCount: tabSwitchCountRef.current,
+                message,
+            }));
+            recordProctorEvent('tab_switch_warning', null, warningCountRef.current, message, {
+                tab_switch_count: tabSwitchCountRef.current,
+            });
+        };
+
+        const restorePageVisibility = () => {
+            pageAwayRef.current = false;
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                recordTabSwitch();
+            } else {
+                restorePageVisibility();
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [attempt?.status, isAssignment, id]);
 
     useEffect(() => {
         if (!cameraReady || attempt?.status !== 'in_progress') {
@@ -1068,6 +1125,7 @@ function AttemptPage() {
                     <div className="proctor-rule-box">
                         <div className="stat-row"><span>Rule 1 person</span><strong>{proctorPersonLabel}</strong></div>
                         <div className="stat-row"><span>Counter absen</span><strong>{proctorState.absenceSeconds}/{PROCTOR_ABSENCE_LIMIT_SECONDS}s</strong></div>
+                        <div className="stat-row"><span>Pindah tab</span><strong>{proctorState.tabSwitchCount}</strong></div>
                         <div className="stat-row"><span>Peringatan</span><strong>{proctorState.warningCount}/{PROCTOR_WARNING_LIMIT}</strong></div>
                         <div className="stat-row"><span>Status</span><strong>{proctorState.violation ? 'Pelanggaran' : 'Aman'}</strong></div>
                         <p className="muted">{proctorState.message}</p>
@@ -1546,6 +1604,9 @@ function AdminReport() {
         { key: 'shuffle_pattern', label: 'Pola', type: 'number', value: (a) => a.shuffle_pattern },
         { key: 'status', label: 'Status', type: 'text', value: (a) => a.status },
         { key: 'score', label: 'Skor', type: 'number', value: (a) => a.score },
+        { key: 'multiple_choice_score', label: 'ABCD', type: 'number', value: (a) => a.category_scores?.multiple_choice?.percentage },
+        { key: 'true_false_score', label: 'T/F', type: 'number', value: (a) => a.category_scores?.true_false?.percentage },
+        { key: 'manual_score', label: 'HOTS/Tugas', type: 'number', value: (a) => a.category_scores?.manual?.percentage },
         { key: 'percentage', label: 'Nilai', type: 'number', value: (a) => a.percentage },
         { key: 'letter_grade', label: 'Grade', type: 'text', value: (a) => a.letter_grade },
         { key: 'proctor_warnings', label: 'Warning', type: 'number', value: (a) => a.proctor_warnings },
@@ -1631,6 +1692,7 @@ function AdminReport() {
     const analysisExam = report?.question_analysis_exam;
     const fmt = (value) => Number(value || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
     const pct = (value) => `${fmt(value)}%`;
+    const categoryPct = (category) => category?.total > 0 ? pct(category.percentage) : '-';
 
     const summaryCards = [
         ['Mahasiswa', fmt(summary.eligible_students)],
@@ -1763,6 +1825,9 @@ function AdminReport() {
                                             <td>{attempt.shuffle_pattern ? `${attempt.shuffle_pattern}/10` : '-'}</td>
                                             <td>{attempt.status}</td>
                                             <td>{attempt.score}/{attempt.total_questions}</td>
+                                            <td>{categoryPct(attempt.category_scores?.multiple_choice)}</td>
+                                            <td>{categoryPct(attempt.category_scores?.true_false)}</td>
+                                            <td>{categoryPct(attempt.category_scores?.manual)}</td>
                                             <td>{pct(attempt.percentage)}</td>
                                             <td><span className="badge">{attempt.letter_grade || '-'}</span></td>
                                             <td>{attempt.proctor_warnings || 0}/{PROCTOR_WARNING_LIMIT}</td>
@@ -1772,7 +1837,7 @@ function AdminReport() {
                                                 : <span className="muted">-</span>}</td>
                                         </tr>
                                     ))}
-                                    {sortedStudentResults.length === 0 && <tr><td colSpan="15">Belum ada attempt sesuai filter.</td></tr>}
+                                    {sortedStudentResults.length === 0 && <tr><td colSpan={studentColumns.length + 2}>Belum ada attempt sesuai filter.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
@@ -2189,7 +2254,7 @@ function AdminGrading() {
     );
 }
 
-function AdminImport() {
+function AdminImport({ title = 'Admin Console', subtitle = 'Kelola bank soal, masa ujian, status akses, dan reset attempt mahasiswa.' }) {
     const [file, setFile] = useState(null);
     const [importClass, setImportClass] = useState('');
     const [message, setMessage] = useState('');
@@ -2206,6 +2271,7 @@ function AdminImport() {
     const [activeQuestionType, setActiveQuestionType] = useState('multiple_choice');
     const [questionClassFilter, setQuestionClassFilter] = useState('__all');
     const [busy, setBusy] = useState('');
+    const [deleteExamPopup, setDeleteExamPopup] = useState(null);
 
     const loadExams = () => api.get('/api/admin/exams').then((data) => {
         setExams(data.exams || []);
@@ -2330,13 +2396,18 @@ function AdminImport() {
 
     const deleteExam = async () => {
         if (!selectedExam) return;
-        if (!confirm(`Hapus ujian ${selectedExam.title}? Soal dan paket ujian ini juga akan dihapus.`)) return;
+        setDeleteExamPopup(selectedExam);
+    };
 
+    const confirmDeleteExam = async () => {
+        const examToDelete = deleteExamPopup;
+        if (!examToDelete) return;
         setBusy('exam-delete');
         setMessage('');
         try {
-            const data = await api.delete(`/api/admin/exams/${selectedExam.id}`);
+            const data = await api.delete(`/api/admin/exams/${examToDelete.id}`);
             setMessage(data.message);
+            setDeleteExamPopup(null);
             setSelectedExamId('');
             setQuestions([]);
             await loadExams();
@@ -2450,8 +2521,8 @@ function AdminImport() {
         <div className="admin-page">
             <section className="admin-titlebar">
                 <div>
-                    <h1>Admin Console</h1>
-                    <p className="muted">Kelola bank soal, masa ujian, status akses, dan reset attempt mahasiswa.</p>
+                    <h1>{title}</h1>
+                    <p className="muted">{subtitle}</p>
                 </div>
                 <Link className="btn secondary" to="/admin/report"><BarChart3 size={17} /> Buka Report</Link>
             </section>
@@ -2721,6 +2792,34 @@ function AdminImport() {
                     />
                 </div>
             </section>
+
+            {deleteExamPopup && (
+                <div className="modal-backdrop" role="presentation" onMouseDown={() => setDeleteExamPopup(null)}>
+                    <div className="modal-card danger-modal" role="dialog" aria-modal="true" aria-labelledby="delete-exam-title" onMouseDown={(event) => event.stopPropagation()}>
+                        <div className="modal-head">
+                            <h2 id="delete-exam-title">Informasi Hapus Ujian</h2>
+                            <button className="icon-btn" onClick={() => setDeleteExamPopup(null)} aria-label="Tutup popup"><X size={18} /></button>
+                        </div>
+                        <p className="muted">Tindakan ini akan menghapus ujian berikut dari database.</p>
+                        <div className="delete-summary">
+                            <div><span>Ujian</span><strong>{deleteExamPopup.title}</strong></div>
+                            <div><span>Mata Kuliah</span><strong>{deleteExamPopup.course?.name || '-'}</strong></div>
+                            <div><span>Kelas</span><strong>{questionClassLabel(deleteExamPopup.class_name)}</strong></div>
+                            <div><span>Soal</span><strong>{deleteExamPopup.questions_count || 0}</strong></div>
+                            <div><span>Attempt</span><strong>{deleteExamPopup.attempts_count || 0}</strong></div>
+                        </div>
+                        <div className="alert error">
+                            Soal dan paket ujian ikut dihapus. Jika ujian sudah memiliki attempt mahasiswa, sistem akan menolak penghapusan dan Anda perlu reset attempt terlebih dahulu.
+                        </div>
+                        <div className="action-row split">
+                            <button className="btn secondary" disabled={busy === 'exam-delete'} onClick={() => setDeleteExamPopup(null)}>Batal</button>
+                            <button className="btn danger" disabled={busy === 'exam-delete'} onClick={confirmDeleteExam}>
+                                <Trash2 size={17} /> {busy === 'exam-delete' ? 'Menghapus...' : 'Hapus Ujian'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

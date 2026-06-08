@@ -958,6 +958,95 @@ h3 {
     color: var(--bad-ink);
 }
 
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(15, 23, 42, 0.58);
+}
+
+.modal-card {
+    width: min(100%, 520px);
+    max-height: calc(100vh - 40px);
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: 0 22px 60px rgba(15, 23, 42, 0.24);
+    padding: 22px;
+}
+
+.danger-modal {
+    border-top: 4px solid var(--bad);
+}
+
+.modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+.modal-head h2 {
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.25;
+}
+
+.icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+    transition: 0.16s ease;
+}
+
+.icon-btn:hover {
+    border-color: var(--bad-border);
+    color: var(--bad-ink);
+    background: var(--bad-soft);
+}
+
+.delete-summary {
+    display: grid;
+    gap: 10px;
+    margin: 18px 0;
+}
+
+.delete-summary div {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.delete-summary div:first-child {
+    border-top: 1px solid var(--border);
+}
+
+.delete-summary span {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.delete-summary strong {
+    color: var(--ink);
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
 .exam-layout {
     display: grid;
     grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(220px, 260px);

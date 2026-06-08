@@ -136,6 +136,27 @@ class ExamFlowTest extends TestCase
             ->assertJsonPath('student_results.0.proctor_violation', true);
     }
 
+    public function test_student_tab_switch_proctoring_events_are_recorded(): void
+    {
+        [$student, $exam] = $this->seedExam();
+        $attemptId = $this->actingAs($student)->postJson("/api/exams/{$exam->id}/start")
+            ->assertCreated()
+            ->json('attempt.id');
+
+        $this->actingAs($student)->postJson("/api/attempts/{$attemptId}/proctor-event", [
+            'type' => 'tab_switch_warning',
+            'tab_switch_count' => 1,
+            'warning_count' => 1,
+            'message' => 'Peringatan pindah tab 1: halaman ujian kehilangan fokus.',
+        ])->assertOk()
+            ->assertJsonPath('attempt.proctor_warnings', 1)
+            ->assertJsonPath('attempt.proctor_violation', false);
+
+        $attempt = Attempt::findOrFail($attemptId);
+        $this->assertSame('tab_switch_warning', $attempt->proctor_events[0]['type']);
+        $this->assertSame(1, $attempt->proctor_events[0]['tab_switch_count']);
+    }
+
     public function test_question_bank_can_be_scoped_per_class(): void
     {
         $course = Course::create([
