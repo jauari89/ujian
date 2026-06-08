@@ -138,6 +138,7 @@ class ExamController extends Controller
                 'exam_id' => $exam->id,
                 'exam_package_id' => $package?->id,
                 'shuffle_pattern' => $shufflePattern,
+                'tf_options_shuffled' => true,
                 'user_id' => $request->user()->id,
                 'started_at' => $startedAt,
                 'ends_at' => $endsAt,

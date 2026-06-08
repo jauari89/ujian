@@ -29,6 +29,8 @@ class AttemptController extends Controller
             'answers.question:id,exam_id,week,question_type,level,question_text,image_url,option_a,option_b,option_c,option_d',
         ]);
 
+        $this->applyTrueFalseOptionShuffle($attempt);
+
         return response()->json(['attempt' => $attempt]);
     }
 
@@ -209,6 +211,8 @@ class AttemptController extends Controller
             'answers.question:id,exam_id,week,question_type,level,question_text,image_url,option_a,option_b,option_c,option_d',
         ]);
 
+        $this->applyTrueFalseOptionShuffle($attempt);
+
         return response()->json([
             'attempt' => $attempt,
             'percentage' => $attempt->percentage,
@@ -293,7 +297,7 @@ class AttemptController extends Controller
         // HOTS/tugas dinilai manual (manual_score/100 poin). Yang belum dinilai
         // berkontribusi 0 (pending) sampai dosen mengoreksi.
         foreach ($attempt->answers as $answer) {
-            $answer->update(['is_correct' => $this->answerIsCorrect($answer)]);
+            $answer->update(['is_correct' => $this->answerIsCorrect($attempt, $answer)]);
         }
 
         [$earned, $total, $percentage] = $attempt->combinedScore();
@@ -331,7 +335,7 @@ class AttemptController extends Controller
             ->first(fn (GradeScale $scale) => $scale->contains($percentage));
     }
 
-    private function answerIsCorrect(AttemptAnswer $answer): ?bool
+    private function answerIsCorrect(Attempt $attempt, AttemptAnswer $answer): ?bool
     {
         $questionType = $answer->question->question_type ?? 'multiple_choice';
         if ($questionType === 'hots' || $questionType === 'file_upload') {
@@ -340,7 +344,9 @@ class AttemptController extends Controller
 
         if ($questionType === 'true_false') {
             $selected = $this->normalizeBooleanOptions($answer->selected_options ?? []);
-            $correct = $this->normalizeBooleanOptions($answer->question->correct_options ?? []);
+            // Jawaban tersimpan pada posisi tampil (a/b/c/d) yang diacak per-attempt,
+            // jadi kunci kanonik diputar ke urutan tampil sebelum dibandingkan.
+            $correct = $this->displayOrderedCorrectOptions($attempt, $answer->question);
 
             foreach (['a', 'b', 'c', 'd'] as $key) {
                 if ($selected[$key] === null || $selected[$key] !== $correct[$key]) {
@@ -363,6 +369,82 @@ class AttemptController extends Controller
                     ? filter_var($options[$key], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
                     : null,
             ])
+            ->all();
+    }
+
+    /**
+     * Urutan tampil opsi T/F untuk sebuah soal pada attempt ini.
+     *
+     * Permutasi deterministik dari (exam, user, shuffle_pattern, question) —
+     * sama persis tiap kali dihitung ulang, sehingga refresh halaman tidak
+     * mengubah urutan dan penilaian konsisten dengan yang dilihat siswa.
+     * Tiap siswa (user_id berbeda) menerima permutasi berbeda, sehingga pola
+     * "pernyataan salah selalu di D" tidak lagi seragam antar peserta.
+     *
+     * @return array<int, string> mis. ['c','a','d','b'] = slot tampil A..D
+     *                            menampilkan opsi kanonik c, a, d, b.
+     */
+    private function trueFalseOptionOrder(Attempt $attempt, int $questionId): array
+    {
+        $keys = ['a', 'b', 'c', 'd'];
+        $seed = "tfopt:{$attempt->exam_id}:{$attempt->user_id}:{$attempt->shuffle_pattern}:{$questionId}";
+
+        usort($keys, fn (string $left, string $right) => crc32("{$seed}:{$left}") <=> crc32("{$seed}:{$right}"));
+
+        return $keys;
+    }
+
+    /**
+     * Putar teks opsi A–D tiap soal true_false pada model yang sudah dimuat
+     * agar siswa melihat opsi dalam urutan acak. Hanya untuk attempt baru
+     * (tf_options_shuffled = true); attempt lama tetap urutan kanonik.
+     */
+    private function applyTrueFalseOptionShuffle(Attempt $attempt): void
+    {
+        if (! $attempt->tf_options_shuffled) {
+            return;
+        }
+
+        foreach ($attempt->answers as $answer) {
+            $question = $answer->question;
+            if (! $question || ($question->question_type ?? null) !== 'true_false') {
+                continue;
+            }
+
+            $order = $this->trueFalseOptionOrder($attempt, $question->id);
+            $canonical = [
+                'a' => $question->option_a,
+                'b' => $question->option_b,
+                'c' => $question->option_c,
+                'd' => $question->option_d,
+            ];
+
+            $question->option_a = $canonical[$order[0]];
+            $question->option_b = $canonical[$order[1]];
+            $question->option_c = $canonical[$order[2]];
+            $question->option_d = $canonical[$order[3]];
+        }
+    }
+
+    /**
+     * Kunci T/F (correct_options) diputar ke urutan tampil attempt ini agar
+     * sebanding dengan selected_options yang tersimpan per posisi tampil.
+     *
+     * @return array<string, bool|null>
+     */
+    private function displayOrderedCorrectOptions(Attempt $attempt, $question): array
+    {
+        $canonical = $this->normalizeBooleanOptions($question->correct_options ?? []);
+
+        if (! $attempt->tf_options_shuffled) {
+            return $canonical;
+        }
+
+        $order = $this->trueFalseOptionOrder($attempt, $question->id);
+        $slots = ['a', 'b', 'c', 'd'];
+
+        return collect($slots)
+            ->mapWithKeys(fn (string $slot, int $index) => [$slot => $canonical[$order[$index]]])
             ->all();
     }
 }
