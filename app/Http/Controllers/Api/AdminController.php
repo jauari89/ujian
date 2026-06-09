@@ -108,17 +108,24 @@ class AdminController extends Controller
     public function attempts()
     {
         return response()->json([
-            'attempts' => Attempt::with([
-                'user:id,nrp,name,email,class_name',
-                'exam:id,course_id,title',
-                'exam.course:id,name,slug',
-                'package:id,name,code',
-                'answers' => fn ($answers) => $answers
-                    ->whereHas('question', fn ($question) => $question->whereIn('question_type', ['file_upload', 'hots']))
-                    ->with('question:id,question_type,question_text,week'),
-            ])
+            'attempts' => Attempt::query()
+                // Hanya attempt yang benar-benar punya jawaban perlu koreksi manual
+                // (esai HOTS / tugas PDF). Tanpa filter ini, paginate ambil 50 id
+                // tertinggi dari SEMUA attempt → ujian lama (mis. UAS Desain Web A,
+                // id 98–126) terdorong keluar window dan tidak pernah muncul.
+                ->whereHas('answers', fn ($answers) => $answers
+                    ->whereHas('question', fn ($question) => $question->whereIn('question_type', ['file_upload', 'hots'])))
+                ->with([
+                    'user:id,nrp,name,email,class_name',
+                    'exam:id,course_id,title',
+                    'exam.course:id,name,slug',
+                    'package:id,name,code',
+                    'answers' => fn ($answers) => $answers
+                        ->whereHas('question', fn ($question) => $question->whereIn('question_type', ['file_upload', 'hots']))
+                        ->with('question:id,question_type,question_text,week'),
+                ])
                 ->latest('id')
-                ->paginate(50),
+                ->paginate(300),
         ]);
     }
 
