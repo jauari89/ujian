@@ -17,6 +17,10 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class AdminController extends Controller
 {
@@ -310,19 +314,7 @@ class AdminController extends Controller
             'class_name' => ['nullable', 'string', 'max:100'],
         ]);
 
-        $attemptQuery = Attempt::with([
-            'user:id,nrp,name,email,class_name',
-            'exam:id,course_id,title',
-            'exam.course:id,name,slug',
-            'package:id,name,code',
-            'answers.question:id,question_type',
-        ])
-            ->when($filters['exam_id'] ?? null, fn ($query, $examId) => $query->where('exam_id', $examId))
-            ->when($filters['course_id'] ?? null, fn ($query, $courseId) => $query->whereHas('exam', fn ($exam) => $exam->where('course_id', $courseId)))
-            ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->whereHas('user', fn ($user) => $user->where('class_name', $className)))
-            ->latest('id');
-
-        $attempts = $attemptQuery->get();
+        $attempts = $this->reportAttempts($filters);
         $scoredAttempts = $attempts->filter(fn (Attempt $attempt) => $attempt->submitted_at !== null);
         $eligibleStudents = User::where('role', 'student')
             ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->where('class_name', $className))
@@ -333,15 +325,7 @@ class AdminController extends Controller
             ? $this->questionAnalysis($reportExam, $scoredAttempts->where('exam_id', $reportExam->id)->pluck('id')->all(), $filters['class_name'] ?? null)
             : [];
 
-        // Mahasiswa yang belum mengerjakan: tidak punya attempt sesuai filter aktif
-        // (per-ujian jika exam dipilih, per-mata-kuliah jika course dipilih, atau global).
-        $attemptedUserIds = $attempts->pluck('user_id')->unique()->all();
-        $notAttempted = User::where('role', 'student')
-            ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->where('class_name', $className))
-            ->whereNotIn('id', $attemptedUserIds)
-            ->orderBy('class_name')
-            ->orderBy('name')
-            ->get(['id', 'nrp', 'name', 'class_name', 'first_login_at']);
+        $notAttempted = $this->notAttemptedStudents($filters, $attempts);
 
         return response()->json([
             'filters' => $filters,
@@ -402,6 +386,203 @@ class AdminController extends Controller
                 'has_logged_in' => $student->first_login_at !== null,
             ])->values(),
         ]);
+    }
+
+    public function exportReport(Request $request)
+    {
+        $filters = $request->validate([
+            'course_id' => ['nullable', 'integer', 'exists:courses,id'],
+            'exam_id' => ['nullable', 'integer', 'exists:exams,id'],
+            'class_name' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $attempts = $this->reportAttempts($filters);
+        $scoredAttempts = $attempts->filter(fn (Attempt $attempt) => $attempt->submitted_at !== null);
+        $eligibleStudents = User::where('role', 'student')
+            ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->where('class_name', $className))
+            ->count();
+
+        $reportExam = $this->reportExam($filters);
+        $questionAnalysis = $reportExam
+            ? $this->questionAnalysis($reportExam, $scoredAttempts->where('exam_id', $reportExam->id)->pluck('id')->all(), $filters['class_name'] ?? null)
+            : [];
+        $notAttempted = $this->notAttemptedStudents($filters, $attempts);
+
+        $courseName = ($filters['course_id'] ?? null) ? Course::find($filters['course_id'])?->name : null;
+        $examTitle = ($filters['exam_id'] ?? null) ? Exam::find($filters['exam_id'])?->title : null;
+
+        $spreadsheet = new Spreadsheet();
+
+        $writeTable = function (Worksheet $sheet, array $headers, array $rows, array $wideColumns = []): void {
+            $sheet->fromArray($headers, null, 'A1');
+            if ($rows !== []) {
+                $sheet->fromArray($rows, null, 'A2');
+            }
+            $lastColumn = Coordinate::stringFromColumnIndex(count($headers));
+            $sheet->getStyle('A1:'.$lastColumn.'1')->getFont()->setBold(true);
+            $sheet->freezePane('A2');
+            $sheet->setAutoFilter('A1:'.$lastColumn.(count($rows) + 1));
+            foreach (range(1, count($headers)) as $index) {
+                $column = Coordinate::stringFromColumnIndex($index);
+                if (in_array($index, $wideColumns, true)) {
+                    $sheet->getColumnDimension($column)->setWidth(60);
+                } else {
+                    $sheet->getColumnDimension($column)->setAutoSize(true);
+                }
+            }
+        };
+
+        // Sheet Ringkasan
+        $summarySheet = $spreadsheet->getActiveSheet();
+        $summarySheet->setTitle('Ringkasan');
+        $summaryRows = [
+            ['Laporan Hasil Ujian'],
+            ['Diekspor pada', now()->format('d-m-Y H:i').' WIB'],
+            ['Mata kuliah', $courseName ?? 'Semua mata kuliah'],
+            ['Ujian', $examTitle ?? 'Semua ujian'],
+            ['Kelas', ($filters['class_name'] ?? null) ?: 'Semua kelas'],
+            [''],
+            ['Mahasiswa terdaftar', $eligibleStudents],
+            ['Total attempt', $attempts->count()],
+            ['Sudah dinilai', $scoredAttempts->count()],
+            ['Sedang berlangsung', $attempts->where('status', 'in_progress')->count()],
+            ['Submitted', $attempts->where('status', 'submitted')->count()],
+            ['Expired', $attempts->where('status', 'expired')->count()],
+            ['Rata-rata nilai', round((float) ($scoredAttempts->avg('percentage') ?? 0), 2)],
+            ['Nilai tertinggi', round((float) ($scoredAttempts->max('percentage') ?? 0), 2)],
+            ['Nilai terendah', round((float) ($scoredAttempts->min('percentage') ?? 0), 2)],
+            [''],
+            ['Distribusi Grade', 'Jumlah'],
+        ];
+        foreach ($this->distribution($scoredAttempts, 'letter_grade') as $item) {
+            $summaryRows[] = [$item['label'], $item['total']];
+        }
+        $summaryRows[] = [''];
+        $summaryRows[] = ['Distribusi Paket', 'Jumlah'];
+        $packageDistribution = $attempts
+            ->groupBy(fn (Attempt $attempt) => $attempt->package?->code ?? '-')
+            ->map(fn ($items, $key) => ['label' => $key, 'total' => $items->count()])
+            ->values();
+        foreach ($packageDistribution as $item) {
+            $summaryRows[] = [$item['label'], $item['total']];
+        }
+        $summarySheet->fromArray($summaryRows);
+        $summarySheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+        $summarySheet->getColumnDimension('A')->setWidth(26);
+        $summarySheet->getColumnDimension('B')->setWidth(34);
+
+        // Sheet Hasil Mahasiswa (kolom sama dengan tabel di halaman Report)
+        $resultRows = $attempts->values()->map(function (Attempt $attempt, int $index) {
+            $scores = $this->categoryScores($attempt);
+
+            return [
+                $index + 1,
+                $attempt->user?->name,
+                $attempt->user?->nrp,
+                $attempt->user?->class_name,
+                $attempt->exam?->course?->name,
+                $attempt->exam?->title,
+                $attempt->package?->code,
+                $attempt->shuffle_pattern,
+                $attempt->status,
+                $attempt->started_at?->format('d-m-Y H:i'),
+                $attempt->submitted_at?->format('d-m-Y H:i'),
+                $attempt->score,
+                $scores['multiple_choice']['percentage'],
+                $scores['true_false']['percentage'],
+                $scores['manual']['percentage'],
+                $attempt->percentage,
+                $attempt->letter_grade,
+                $attempt->proctor_warnings,
+                $attempt->proctor_violation ? 'Ya' : '',
+            ];
+        })->all();
+        $writeTable(
+            $spreadsheet->createSheet()->setTitle('Hasil Mahasiswa'),
+            ['No', 'Nama', 'NRP', 'Kelas', 'Mata Kuliah', 'Ujian', 'Paket', 'Pola', 'Status', 'Waktu Mulai', 'Waktu Selesai', 'Skor', 'ABCD (%)', 'T-F (%)', 'HOTS-Tugas (%)', 'Nilai (%)', 'Grade', 'Warning', 'Proctor'],
+            $resultRows
+        );
+
+        // Sheet Analisa Butir (hanya kalau ada ujian terpilih, sama spt tab di web)
+        if ($questionAnalysis !== []) {
+            $analysisRows = collect($questionAnalysis)->map(fn ($question) => [
+                $question['number'],
+                $question['week'],
+                $question['question_type'],
+                $question['question_text'],
+                $question['answered_total'],
+                $question['correct_total'],
+                $question['wrong_total'],
+                $question['unanswered_total'],
+                $question['correct_rate'],
+            ])->all();
+            $writeTable(
+                $spreadsheet->createSheet()->setTitle('Analisa Butir'),
+                ['No', 'Minggu', 'Jenis', 'Soal', 'Dijawab', 'Benar', 'Salah', 'Kosong', 'Akurasi (%)'],
+                $analysisRows,
+                [4]
+            );
+        }
+
+        // Sheet Belum Mengerjakan
+        $notAttemptedRows = $notAttempted->values()->map(fn (User $student, int $index) => [
+            $index + 1,
+            $student->nrp,
+            $student->name,
+            $student->class_name,
+            $student->first_login_at !== null ? 'Ya' : 'Belum',
+        ])->all();
+        $writeTable(
+            $spreadsheet->createSheet()->setTitle('Belum Mengerjakan'),
+            ['No', 'NRP', 'Nama', 'Kelas', 'Sudah Login'],
+            $notAttemptedRows
+        );
+
+        $spreadsheet->setActiveSheetIndex(0);
+
+        $nameParts = array_filter([
+            'hasil-ujian',
+            $examTitle ? Str::slug($examTitle) : ($courseName ? Str::slug($courseName) : null),
+            ($filters['class_name'] ?? null) ? Str::slug($filters['class_name']) : null,
+            now()->format('Ymd-Hi'),
+        ]);
+        $filename = implode('_', $nameParts).'.xlsx';
+
+        $writer = new Xlsx($spreadsheet);
+
+        return response()->streamDownload(
+            fn () => $writer->save('php://output'),
+            $filename,
+            ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+        );
+    }
+
+    private function reportAttempts(array $filters)
+    {
+        return Attempt::with([
+            'user:id,nrp,name,email,class_name',
+            'exam:id,course_id,title',
+            'exam.course:id,name,slug',
+            'package:id,name,code',
+            'answers.question:id,question_type',
+        ])
+            ->when($filters['exam_id'] ?? null, fn ($query, $examId) => $query->where('exam_id', $examId))
+            ->when($filters['course_id'] ?? null, fn ($query, $courseId) => $query->whereHas('exam', fn ($exam) => $exam->where('course_id', $courseId)))
+            ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->whereHas('user', fn ($user) => $user->where('class_name', $className)))
+            ->latest('id')
+            ->get();
+    }
+
+    // Mahasiswa yang belum mengerjakan: tidak punya attempt sesuai filter aktif
+    // (per-ujian jika exam dipilih, per-mata-kuliah jika course dipilih, atau global).
+    private function notAttemptedStudents(array $filters, $attempts)
+    {
+        return User::where('role', 'student')
+            ->when($filters['class_name'] ?? null, fn ($query, $className) => $query->where('class_name', $className))
+            ->whereNotIn('id', $attempts->pluck('user_id')->unique()->all())
+            ->orderBy('class_name')
+            ->orderBy('name')
+            ->get(['id', 'nrp', 'name', 'class_name', 'first_login_at']);
     }
 
     public function courses()

@@ -49,5 +49,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/answers/{answer}/file', [AdminController::class, 'downloadAnswerFile']);
         Route::post('/admin/answers/{answer}/grade', [AdminController::class, 'gradeAnswer']);
         Route::get('/admin/reports/results', [AdminController::class, 'report']);
+        Route::get('/admin/reports/results/export', [AdminController::class, 'exportReport']);
     });
 });

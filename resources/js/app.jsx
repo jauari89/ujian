@@ -3,7 +3,7 @@ import '../css/app.css';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BarChart3, BookOpen, CalendarClock, Camera, CameraOff, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, Clock, Database, FileUp, LayoutDashboard, LogOut, Pencil, Plus, Power, RotateCcw, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarClock, Camera, CameraOff, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, Clock, Database, Download, FileUp, LayoutDashboard, LogOut, Moon, Pencil, Plus, Power, RotateCcw, ShieldCheck, Sun, Trash2, Users, X } from 'lucide-react';
 import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 
 const api = {
@@ -97,6 +97,25 @@ function App() {
     );
 }
 
+function ThemeToggle() {
+    const [theme, setTheme] = useState(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+
+    const toggle = () => {
+        const next = theme === 'dark' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = next;
+        try { localStorage.setItem('exam-theme', next); } catch (e) { /* storage blocked */ }
+        setTheme(next);
+    };
+
+    const label = theme === 'dark' ? 'Mode terang' : 'Mode gelap';
+
+    return (
+        <button type="button" className="btn secondary theme-toggle" onClick={toggle} aria-label={label} title={label}>
+            {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
+    );
+}
+
 function Shell({ children, user, setUser }) {
     const navigate = useNavigate();
     const location = useLocation();
@@ -110,14 +129,17 @@ function Shell({ children, user, setUser }) {
         <div className="app-shell">
             <header className="topbar">
                 <div className="brand"><span className="brand-mark"><ShieldCheck size={20} /></span> Smart Exam</div>
-                {user && (
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <span className="muted">{user.name} ({user.role})</span>
-                        {user.role === 'admin' && <AdminNav />}
-                        {user.role === 'student' && <Link className="btn secondary" to="/courses">Mata Kuliah</Link>}
-                        <button className="btn secondary" onClick={logout}><LogOut size={17} /> Keluar</button>
-                    </div>
-                )}
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {user && (
+                        <>
+                            <span className="muted">{user.name} ({user.role})</span>
+                            {user.role === 'admin' && <AdminNav />}
+                            {user.role === 'student' && <Link className="btn secondary" to="/courses">Mata Kuliah</Link>}
+                        </>
+                    )}
+                    <ThemeToggle />
+                    {user && <button className="btn secondary" onClick={logout}><LogOut size={17} /> Keluar</button>}
+                </div>
             </header>
             <main className={`container ${user?.role === 'admin' ? 'admin-container' : ''} ${location.pathname.startsWith('/attempt/') ? 'attempt-container' : ''}`}>{children}</main>
         </div>
@@ -1616,6 +1638,14 @@ function AdminReport() {
         }));
     };
 
+    const exportUrl = useMemo(() => {
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([key, value]) => {
+            if (value) params.set(key, value);
+        });
+        return `/api/admin/reports/results/export${params.toString() ? `?${params.toString()}` : ''}`;
+    }, [filters.course_id, filters.exam_id, filters.class_name]);
+
     const courses = report?.meta?.courses || [];
     const exams = (report?.meta?.exams || []).filter((exam) => !filters.course_id || String(exam.course_id) === String(filters.course_id));
     const classes = report?.meta?.classes || [];
@@ -1633,6 +1663,8 @@ function AdminReport() {
         { key: 'package', label: 'Paket', type: 'text', value: (a) => a.package },
         { key: 'shuffle_pattern', label: 'Pola', type: 'number', value: (a) => a.shuffle_pattern },
         { key: 'status', label: 'Status', type: 'text', value: (a) => a.status },
+        { key: 'started_at', label: 'Waktu Mulai', type: 'text', value: (a) => a.started_at },
+        { key: 'submitted_at', label: 'Waktu Selesai', type: 'text', value: (a) => a.submitted_at },
         { key: 'score', label: 'Skor', type: 'number', value: (a) => a.score },
         { key: 'multiple_choice_score', label: 'ABCD', type: 'number', value: (a) => a.category_scores?.multiple_choice?.percentage },
         { key: 'true_false_score', label: 'T/F', type: 'number', value: (a) => a.category_scores?.true_false?.percentage },
@@ -1743,7 +1775,10 @@ function AdminReport() {
                         <h1>Report & Analisa Hasil</h1>
                         <p className="muted">Rekap nilai mahasiswa, paket soal, grade, dan performa tiap butir soal.</p>
                     </div>
-                    <button className="btn secondary" onClick={() => setFilters({ course_id: '', exam_id: '', class_name: '' })}>Reset Filter</button>
+                    <div className="section-actions">
+                        <a className="btn secondary" href={exportUrl}><Download size={16} /> Export Excel</a>
+                        <button className="btn secondary" onClick={() => setFilters({ course_id: '', exam_id: '', class_name: '' })}>Reset Filter</button>
+                    </div>
                 </div>
 
                 <div className="filter-row">
@@ -1854,6 +1889,8 @@ function AdminReport() {
                                             <td>{attempt.package || '-'}</td>
                                             <td>{attempt.shuffle_pattern ? `${attempt.shuffle_pattern}/10` : '-'}</td>
                                             <td>{attempt.status}</td>
+                                            <td>{formatTimeOnly(attempt.started_at)}</td>
+                                            <td>{formatTimeOnly(attempt.submitted_at)}</td>
                                             <td>{attempt.score}/{attempt.total_questions}</td>
                                             <td>{categoryPct(attempt.category_scores?.multiple_choice)}</td>
                                             <td>{categoryPct(attempt.category_scores?.true_false)}</td>
@@ -2020,6 +2057,17 @@ function formatDateTime(value) {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+}
+
+function formatTimeOnly(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+
+    return date.toLocaleTimeString('id-ID', {
         hour: '2-digit',
         minute: '2-digit',
     });
@@ -2241,14 +2289,17 @@ function AdminGrading() {
                                                 {pending > 0 && <span className="status-pill mini scheduled" style={{ marginLeft: 6 }}>{pending} baru</span>}
                                             </td>
                                         </tr>
-                                        {expanded && submissions.map((answer) => (
+                                        {expanded && submissions.map((answer) => {
+                                            const saving = busy === `grade-${answer.id}`;
+                                            const scored = answer.manual_score != null;
+                                            return (
                                             <tr key={answer.id} className="grade-row">
                                                 <td colSpan="9">
-                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', padding: '6px 2px' }}>
-                                                        <div style={{ flex: '1 1 320px' }}>
+                                                    <div className="grade-card">
+                                                        <div className="grade-q">
                                                             <span className="badge">{questionTypeLabel(answer.question?.question_type)}</span> <strong>{answer.question?.question_text || '-'}</strong>
                                                             {answer.question?.question_type === 'hots' ? (
-                                                                <div className="muted" style={{ marginTop: 6, whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto', background: 'var(--surface-2, #f8fafc)', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: 10 }}>
+                                                                <div className="grade-essay">
                                                                     {(answer.essay_answer || '').trim() || 'Belum dijawab mahasiswa.'}
                                                                 </div>
                                                             ) : (
@@ -2259,19 +2310,24 @@ function AdminGrading() {
                                                                 </div>
                                                             )}
                                                         </div>
-                                                        <div className="field" style={{ width: 110, margin: 0 }}>
-                                                            <label>Nilai (0-100)</label>
-                                                            <input type="number" min="0" max="100" step="0.01" value={gradeForm[answer.id]?.manual_score ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_score: event.target.value } })} />
+                                                        <div className="grade-controls">
+                                                            <div className="field grade-score" style={{ margin: 0 }}>
+                                                                <label>Nilai (0-100)</label>
+                                                                <input type="number" min="0" max="100" step="0.01" value={gradeForm[answer.id]?.manual_score ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_score: event.target.value } })} />
+                                                            </div>
+                                                            <div className="field grade-note" style={{ margin: 0 }}>
+                                                                <label>Catatan</label>
+                                                                <input value={gradeForm[answer.id]?.manual_feedback ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_feedback: event.target.value } })} />
+                                                            </div>
+                                                            <button type="button" className="btn primary grade-save" disabled={saving} onClick={() => saveGrade(answer)}>
+                                                                {saving ? <>Menyimpan…</> : <><Check size={17} /> {scored ? 'Perbarui Nilai' : 'Simpan Nilai'}</>}
+                                                            </button>
                                                         </div>
-                                                        <div className="field" style={{ flex: '1 1 200px', margin: 0 }}>
-                                                            <label>Catatan</label>
-                                                            <input value={gradeForm[answer.id]?.manual_feedback ?? ''} onChange={(event) => setGradeForm({ ...gradeForm, [answer.id]: { ...gradeForm[answer.id], manual_feedback: event.target.value } })} />
-                                                        </div>
-                                                        <button className="btn primary mini" disabled={busy === `grade-${answer.id}`} onClick={() => saveGrade(answer)}>Simpan</button>
                                                     </div>
                                                 </td>
                                             </tr>
-                                        ))}
+                                            );
+                                        })}
                                     </React.Fragment>
                                 );
                             })}
