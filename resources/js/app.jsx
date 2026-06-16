@@ -2348,8 +2348,8 @@ function AdminImport({ title = 'Admin Console', subtitle = 'Kelola bank soal, ma
     const [courses, setCourses] = useState([]);
     const [classes, setClasses] = useState([]);
     const [selectedExamId, setSelectedExamId] = useState('');
-    const [examForm, setExamForm] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, hots_count: 0, is_active: true, opens_at: '', closes_at: '' });
-    const [settings, setSettings] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, is_active: true, opens_at: '', closes_at: '' });
+    const [examForm, setExamForm] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, hots_count: 0, is_active: true, weighted_scoring: false, opens_at: '', closes_at: '' });
+    const [settings, setSettings] = useState({ course_id: '', title: '', class_name: '', duration_minutes: 60, is_active: true, weighted_scoring: false, opens_at: '', closes_at: '' });
     const [resetClass, setResetClass] = useState('');
     const [questions, setQuestions] = useState([]);
     const [questionForm, setQuestionForm] = useState(emptyQuestionForm);
@@ -2402,10 +2402,11 @@ function AdminImport({ title = 'Admin Console', subtitle = 'Kelola bank soal, ma
             class_name: selectedExam.class_name || '',
             duration_minutes: selectedExam.duration_minutes || 60,
             is_active: Boolean(selectedExam.is_active),
+            weighted_scoring: Boolean(selectedExam.weighted_scoring),
             opens_at: toDatetimeLocal(selectedExam.opens_at),
             closes_at: toDatetimeLocal(selectedExam.closes_at),
         });
-    }, [selectedExamId, selectedExam?.duration_minutes, selectedExam?.is_active, selectedExam?.opens_at, selectedExam?.closes_at]);
+    }, [selectedExamId, selectedExam?.duration_minutes, selectedExam?.is_active, selectedExam?.weighted_scoring, selectedExam?.opens_at, selectedExam?.closes_at]);
 
     useEffect(() => {
         setActiveQuestionType('multiple_choice');
@@ -2447,7 +2448,7 @@ function AdminImport({ title = 'Admin Console', subtitle = 'Kelola bank soal, ma
                 closes_at: examForm.closes_at || null,
             });
             setMessage(data.message);
-            setExamForm({ course_id: examForm.course_id, title: '', class_name: examForm.class_name, duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, hots_count: 0, is_active: true, opens_at: '', closes_at: '' });
+            setExamForm({ course_id: examForm.course_id, title: '', class_name: examForm.class_name, duration_minutes: 60, multiple_choice_count: 0, true_false_count: 0, hots_count: 0, is_active: true, weighted_scoring: false, opens_at: '', closes_at: '' });
             await loadExams();
             setSelectedExamId(String(data.exam.id));
         } catch (err) {
@@ -2468,6 +2469,7 @@ function AdminImport({ title = 'Admin Console', subtitle = 'Kelola bank soal, ma
                 class_name: settings.class_name || null,
                 duration_minutes: Number(settings.duration_minutes || 60),
                 is_active: nextActive,
+                weighted_scoring: settings.weighted_scoring,
                 opens_at: settings.opens_at || null,
                 closes_at: settings.closes_at || null,
             });
@@ -2695,7 +2697,11 @@ function AdminImport({ title = 'Admin Console', subtitle = 'Kelola bank soal, ma
                             <label>Ambil HOTS dari Bank</label>
                             <input type="number" min="0" max="500" value={examForm.hots_count} onChange={(event) => setExamForm({ ...examForm, hots_count: event.target.value })} />
                         </div>
-                        <p className="muted compact-note">Isi 0 jika ujian dibuat kosong lalu soal dimasukkan lewat Import Soal.</p>
+                        <label className="check-row compact">
+                            <input type="checkbox" checked={examForm.weighted_scoring} onChange={(event) => setExamForm({ ...examForm, weighted_scoring: event.target.checked })} />
+                            <span>Penilaian berbobot: (ABCD + T/F) 50% &amp; HOTS 50%</span>
+                        </label>
+                        <p className="muted compact-note">Isi 0 jika ujian dibuat kosong lalu soal dimasukkan lewat Import Soal. Bila bobot dimatikan, tiap soal bernilai 1 poin sama rata.</p>
                         <button className="btn primary" disabled={busy === 'exam-create'}><Plus size={17} /> Buat Ujian</button>
                     </form>
 
@@ -2768,6 +2774,13 @@ function AdminImport({ title = 'Admin Console', subtitle = 'Kelola bank soal, ma
                                 <div className="field">
                                     <label>Selesai</label>
                                     <input type="datetime-local" value={settings.closes_at} onChange={(event) => setSettings({ ...settings, closes_at: event.target.value })} />
+                                </div>
+                                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                                    <label className="check-row compact">
+                                        <input type="checkbox" checked={settings.weighted_scoring} onChange={(event) => setSettings({ ...settings, weighted_scoring: event.target.checked })} />
+                                        <span>Penilaian berbobot: (ABCD + T/F) 50% &amp; HOTS 50%</span>
+                                    </label>
+                                    <p className="muted compact-note">Aktif: nilai akhir = otomatis 50% + HOTS/Tugas 50% (tiap blok 0–100). Klik "Simpan Masa" untuk menerapkan.</p>
                                 </div>
                             </div>
 

@@ -6,12 +6,13 @@ use Illuminate\Database\Eloquent\Model;
 
 class Exam extends Model
 {
-    protected $fillable = ['course_id', 'class_name', 'title', 'duration_minutes', 'is_active', 'opens_at', 'closes_at'];
+    protected $fillable = ['course_id', 'class_name', 'title', 'duration_minutes', 'is_active', 'weighted_scoring', 'opens_at', 'closes_at'];
 
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
+            'weighted_scoring' => 'boolean',
             'duration_minutes' => 'integer',
             'opens_at' => 'datetime',
             'closes_at' => 'datetime',

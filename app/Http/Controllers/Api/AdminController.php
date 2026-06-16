@@ -945,6 +945,7 @@ class AdminController extends Controller
             'class_name' => ['nullable', 'string', 'max:100'],
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:300'],
             'is_active' => ['required', 'boolean'],
+            'weighted_scoring' => ['nullable', 'boolean'],
             'opens_at' => ['nullable', 'date'],
             'closes_at' => ['nullable', 'date', 'after_or_equal:opens_at'],
         ]);
@@ -952,6 +953,7 @@ class AdminController extends Controller
         $data['course_id'] = $data['course_id'] ?? $exam?->course_id;
         $data['title'] = $data['title'] ?? $exam?->title;
         $data['class_name'] = $this->normalizeClassName($data['class_name'] ?? $exam?->class_name);
+        $data['weighted_scoring'] = $request->boolean('weighted_scoring', (bool) ($exam?->weighted_scoring ?? false));
 
         return $data;
     }
@@ -1207,6 +1209,7 @@ class AdminController extends Controller
             'title' => $exam->title,
             'duration_minutes' => $exam->duration_minutes,
             'is_active' => $exam->is_active,
+            'weighted_scoring' => (bool) $exam->weighted_scoring,
             'opens_at' => $exam->opens_at,
             'closes_at' => $exam->closes_at,
             'is_open_now' => $exam->isOpenNow(),

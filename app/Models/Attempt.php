@@ -72,8 +72,9 @@ class Attempt extends Model
      * HOTS/tugas dinilai manual (manual_score/100 poin). Soal manual yang belum
      * dikoreksi berkontribusi 0 (pending).
      *
-     * Khusus Animasi 3D kelas 2 MMB A: nilai otomatis (ABCD + T/F) berbobot 50%
-     * dan nilai HOTS/tugas berbobot 50%.
+     * Bila ujian memakai penilaian berbobot (weighted_scoring, atau aturan lama
+     * Animasi 3D kelas 2 MMB A): nilai otomatis (ABCD + T/F) berbobot 50% dan
+     * nilai HOTS/tugas berbobot 50%, tiap blok berskala 0-100.
      *
      * @return array{0: float, 1: int, 2: float} [poin_didapat, total_soal, persentase]
      */
@@ -81,8 +82,8 @@ class Attempt extends Model
     {
         $this->loadMissing('answers.question', 'exam.course', 'user');
 
-        if ($this->usesBalancedAnimationScore()) {
-            return $this->balancedAnimationScore();
+        if ($this->usesWeightedScore()) {
+            return $this->weightedScore();
         }
 
         $earned = 0.0;
@@ -97,13 +98,19 @@ class Attempt extends Model
         return [$earned, $total, $percentage];
     }
 
-    private function usesBalancedAnimationScore(): bool
+    private function usesWeightedScore(): bool
     {
+        // Diaktifkan per-ujian lewat toggle dosen...
+        if ($this->exam?->weighted_scoring) {
+            return true;
+        }
+
+        // ...atau lewat aturan lama yang ter-hardcode (tetap dipertahankan).
         return $this->exam?->course?->slug === 'animasi-3d'
             && ($this->user?->class_name === '2 MMB A' || $this->exam?->class_name === '2 MMB A');
     }
 
-    private function balancedAnimationScore(): array
+    private function weightedScore(): array
     {
         $autoEarned = 0.0;
         $autoTotal = 0;
